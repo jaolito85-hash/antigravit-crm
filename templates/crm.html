@@ -997,16 +997,55 @@
             </div>
         </div>
 
-        <!-- ===== HEALTH ===== -->
+        <!-- ===== HEALTH MONITOR ===== -->
         <div class="view" id="view-health">
             <div class="page-header">
                 <div>
                     <h1>Health Monitor</h1>
-                    <p>Status dos deploys</p>
-                </div><button class="btn btn-primary" onclick="runHealthCheck()"><i class="ri-pulse-line"></i>Verificar
-                    Agora</button>
+                    <p>Status em tempo real dos projetos em produção</p>
+                </div>
+                <div style="display:flex;gap:8px">
+                    <button class="btn btn-ghost" onclick="testHealthAlert()"><i class="ri-notification-line"></i> Testar Alerta</button>
+                    <button class="btn btn-primary" id="btn-health-run" onclick="runDeepHealthCheck()"><i class="ri-pulse-line"></i> Verificar Agora</button>
+                </div>
             </div>
-            <div class="health-grid" id="health-grid"></div>
+
+            <!-- Status cards dos projetos -->
+            <div class="stats-grid" id="health-summary" style="margin-bottom:20px">
+                <div class="stat-card"><div class="stat-label">Status Geral</div><div class="stat-value" id="health-overall" style="font-size:18px">Carregando...</div></div>
+                <div class="stat-card"><div class="stat-label">Projetos Saudáveis</div><div class="stat-value green" id="health-count-up">—</div></div>
+                <div class="stat-card"><div class="stat-label">Projetos Degradados</div><div class="stat-value yellow" id="health-count-degraded">—</div></div>
+                <div class="stat-card"><div class="stat-label">Projetos Offline</div><div class="stat-value red" id="health-count-down">—</div></div>
+            </div>
+
+            <!-- Cards de cada projeto -->
+            <div class="health-grid" id="health-grid">
+                <p style="color:#555;padding:20px">Clique "Verificar Agora" para checar os projetos.</p>
+            </div>
+
+            <!-- Logs recentes -->
+            <div class="card" style="margin-top:20px">
+                <div class="card-header">
+                    <h3>Histórico de Checagens</h3>
+                    <button class="btn btn-sm btn-ghost" onclick="loadHealthLogs()"><i class="ri-refresh-line"></i> Atualizar</button>
+                </div>
+                <div class="card-body">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Horário</th>
+                                <th>Projeto</th>
+                                <th>Status</th>
+                                <th>Tempo (ms)</th>
+                                <th>Alerta</th>
+                            </tr>
+                        </thead>
+                        <tbody id="health-logs-body">
+                            <tr><td colspan="5" style="text-align:center;color:#555;padding:20px">Carregando logs...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <!-- ===== USERS (admin) ===== -->
@@ -1355,48 +1394,126 @@
             document.getElementById('modal-overlay').classList.add('active');
         }
 
+        // === HEALTH MONITOR (atualizado) ===
         async function loadHealth() {
-            const data = await api('/api/health-check');
-            if (!data.length) {
-                document.getElementById('health-grid').innerHTML = '<p style="color:#555;padding:20px">Nenhum deploy monitorado. Adicione URLs de deploy nos leads.</p>';
-                return;
-            }
-            document.getElementById('health-grid').innerHTML = data.map(h => `<div class="health-card">
-        <div class="health-status"><div class="health-dot unknown"></div><strong>${h.nome || 'Deploy'}</strong></div>
-        <div style="font-size:12px;color:var(--text2)">${h.verticais ? h.verticais.icone + ' ' + h.verticais.nome : ''}</div>
-        <div style="font-size:12px;color:var(--text2);margin-top:6px">URL: <a href="${h.deploy_url}" target="_blank" style="color:var(--primary)">${h.deploy_url}</a></div>
-        <div style="font-size:12px;color:var(--text2);margin-top:4px">Status do lead: ${statusBadge(h.status)}</div>
-        <div style="margin-top:8px"><button class="btn btn-sm btn-ghost" onclick="pingDeploy('${h.deploy_url}',this)"><i class="ri-pulse-line"></i> Verificar</button></div>
-    </div>`).join('');
+            await runDeepHealthCheck();
+            await loadHealthLogs();
         }
 
-        async function runHealthCheck() {
-            const btn = event.target.closest('button');
-            btn.disabled = true; btn.innerHTML = '<i class="ri-loader-4-line"></i> Verificando...';
-            const r = await api('/api/health-check/run', { method: 'POST' });
-            if (r.results) {
-                document.getElementById('health-grid').innerHTML = r.results.map(h => `<div class="health-card">
-            <div class="health-status"><div class="health-dot ${h.status}"></div><strong>${h.nome}</strong></div>
-            <div style="font-size:12px;color:var(--text2)">URL: <a href="${h.url}" target="_blank" style="color:var(--primary)">${h.url}</a></div>
-            <div style="font-size:12px;color:var(--text2);margin-top:4px">Tempo: ${h.ms ? h.ms + 'ms' : '—'} | HTTP: ${h.code || 'Timeout'}</div>
-        </div>`).join('');
-            }
-            btn.disabled = false; btn.innerHTML = '<i class="ri-pulse-line"></i> Verificar Agora';
-        }
+        async function runDeepHealthCheck() {
+            const btn = document.getElementById('btn-health-run');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ri-loader-4-line"></i> Verificando...'; }
 
-        async function pingDeploy(url, btn) {
-            btn.disabled = true; btn.textContent = '...';
             try {
-                const start = Date.now();
-                const r = await fetch(url, { mode: 'no-cors' });
-                const ms = Date.now() - start;
-                btn.closest('.health-card').querySelector('.health-dot').className = 'health-dot up';
-                btn.innerHTML = '✅ Online (' + ms + 'ms)';
-            } catch {
-                btn.closest('.health-card').querySelector('.health-dot').className = 'health-dot down';
-                btn.innerHTML = '❌ Offline';
+                const data = await api('/api/health-monitor');
+
+                // Summary cards
+                document.getElementById('health-count-up').textContent = data.healthy || 0;
+                document.getElementById('health-count-degraded').textContent = data.degraded || 0;
+                document.getElementById('health-count-down').textContent = data.down || 0;
+
+                if (data.down > 0) {
+                    document.getElementById('health-overall').innerHTML = '<span style="color:#ef4444">🔴 ALERTA</span>';
+                } else if (data.degraded > 0) {
+                    document.getElementById('health-overall').innerHTML = '<span style="color:#f59e0b">🟡 Degradado</span>';
+                } else {
+                    document.getElementById('health-overall').innerHTML = '<span style="color:#10b981">🟢 Tudo OK</span>';
+                }
+
+                // Project cards
+                const grid = document.getElementById('health-grid');
+                if (!data.projects || data.projects.length === 0) {
+                    grid.innerHTML = '<p style="color:#555;padding:20px">Nenhum projeto configurado para monitoramento.</p>';
+                } else {
+                    grid.innerHTML = data.projects.map(p => {
+                        const statusColor = p.overall === 'up' ? '#10b981' : p.overall === 'degraded' ? '#f59e0b' : '#ef4444';
+                        const statusDot = p.overall === 'up' ? 'up' : 'down';
+                        const statusLabel = p.overall === 'up' ? 'Online' : p.overall === 'degraded' ? 'Degradado' : 'Offline';
+
+                        // Serviços internos
+                        const services = p.services || {};
+                        const svcHtml = Object.entries(services).map(([name, info]) => {
+                            const sColor = info.status === 'up' ? '#10b981' : info.status === 'warning' ? '#f59e0b' : '#ef4444';
+                            const sIcon = info.status === 'up' ? '✅' : info.status === 'warning' ? '⚠️' : '❌';
+                            const msText = info.ms ? ` (${info.ms}ms)` : '';
+                            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+                                <span>${sIcon} ${name}</span>
+                                <span style="color:${sColor};font-weight:600">${info.status}${msText}</span>
+                            </div>`;
+                        }).join('');
+
+                        // Feedbacks info
+                        const fb = services.feedbacks || {};
+                        const fbHtml = fb.total !== undefined ? `<div style="margin-top:10px;font-size:11px;color:var(--text2)">📊 ${fb.total} feedbacks | ${fb.abertos || 0} abertos | ${fb.criticos || 0} críticos</div>` : '';
+
+                        const errorHtml = p.error ? `<div style="margin-top:8px;padding:8px 10px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.15);border-radius:8px;font-size:11px;color:#ef4444">${p.error}</div>` : '';
+
+                        return `<div class="health-card" style="border-left:3px solid ${statusColor}">
+                            <div class="health-status">
+                                <div class="health-dot ${statusDot}"></div>
+                                <strong>${p.icon || '📦'} ${p.project_name || p.project}</strong>
+                                <span class="badge badge-${p.overall === 'up' ? 'green' : p.overall === 'degraded' ? 'yellow' : 'red'}" style="margin-left:auto">${statusLabel}</span>
+                            </div>
+                            <div style="font-size:12px;color:var(--text2);margin:6px 0">
+                                ${p.dashboard_url ? '<a href="' + p.dashboard_url + '" target="_blank" style="color:var(--primary)">' + p.dashboard_url + '</a>' : 'URL não configurada'}
+                                ${p.response_ms ? ' · ' + p.response_ms + 'ms' : ''}
+                            </div>
+                            ${errorHtml}
+                            <div style="margin-top:12px">${svcHtml}</div>
+                            ${fbHtml}
+                        </div>`;
+                    }).join('');
+                }
+            } catch (e) {
+                console.error('Health check error:', e);
+                document.getElementById('health-grid').innerHTML = '<p style="color:#ef4444;padding:20px">Erro ao verificar projetos: ' + e.message + '</p>';
             }
-            btn.disabled = false;
+
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ri-pulse-line"></i> Verificar Agora'; }
+        }
+
+        async function loadHealthLogs() {
+            try {
+                const logs = await api('/api/health-monitor/logs');
+                const body = document.getElementById('health-logs-body');
+                if (!logs || !logs.length) {
+                    body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#555;padding:20px">Nenhum log ainda. O monitor grava automaticamente a cada 5 min.</td></tr>';
+                    return;
+                }
+                body.innerHTML = logs.slice(0, 50).map(l => {
+                    const statusBadge = l.overall === 'up'
+                        ? '<span class="badge badge-green">UP</span>'
+                        : l.overall === 'degraded'
+                            ? '<span class="badge badge-yellow">DEGRADED</span>'
+                            : '<span class="badge badge-red">DOWN</span>';
+                    const alertBadge = l.alert_sent ? '<span class="badge badge-red">📱 Enviado</span>' : '<span style="color:#555;font-size:11px">—</span>';
+                    return `<tr>
+                        <td style="font-size:11px">${fmtDateTime(l.checked_at)}</td>
+                        <td>${l.project_name || l.project}</td>
+                        <td>${statusBadge}</td>
+                        <td>${l.response_ms ? l.response_ms + 'ms' : '—'}</td>
+                        <td>${alertBadge}</td>
+                    </tr>`;
+                }).join('');
+            } catch (e) {
+                console.error('Health logs error:', e);
+            }
+        }
+
+        async function testHealthAlert() {
+            const btn = event.target.closest('button');
+            btn.disabled = true; btn.innerHTML = '<i class="ri-loader-4-line"></i> Enviando...';
+            try {
+                const r = await api('/api/health-monitor/test-alert', { method: 'POST' });
+                if (r.sent) {
+                    alert('✅ Alerta de teste enviado! Verifique seu WhatsApp.');
+                } else {
+                    alert('⚠️ Não foi possível enviar. Verifique as variáveis EVOLUTION e ALERT_WHATSAPP_PHONE no .env do CRM.');
+                }
+            } catch (e) {
+                alert('❌ Erro: ' + e.message);
+            }
+            btn.disabled = false; btn.innerHTML = '<i class="ri-notification-line"></i> Testar Alerta';
         }
 
         async function loadUsers() {

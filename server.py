@@ -6,6 +6,7 @@ import os
 import json
 import secrets
 import requests
+import threading
 from datetime import datetime, timedelta
 from functools import wraps
 from dotenv import load_dotenv
@@ -922,11 +923,304 @@ def ensure_admin_exists():
 
 
 # ============================================================
+# HEALTH MONITOR CENTRAL
+# ============================================================
+
+# Config: Projetos monitorados
+MONITORED_PROJECTS = [
+    {
+        "id": "prefeitura_ivate",
+        "name": "Prefeitura Ivaté (Clara)",
+        "health_url": os.getenv("HEALTH_URL_PREFEITURA", "https://prefeitura.nodedata.com.br/api/health"),
+        "dashboard_url": os.getenv("DASHBOARD_URL_PREFEITURA", "https://prefeitura.nodedata.com.br"),
+        "icon": "🏛️",
+        "critical": True
+    },
+    {
+        "id": "atacaforte_supermercado",
+        "name": "Atacaforte (Seu Pipico)",
+        "health_url": os.getenv("HEALTH_URL_ATACAFORTE", "https://atacaforte.nodedata.com.br/api/health"),
+        "dashboard_url": os.getenv("DASHBOARD_URL_ATACAFORTE", "https://atacaforte.nodedata.com.br"),
+        "icon": "🛒",
+        "critical": True
+    },
+]
+
+ALERT_PHONE = os.getenv("ALERT_WHATSAPP_PHONE", "")
+CRM_EVOLUTION_URL = os.getenv("EVOLUTION_API_URL", "")
+CRM_EVOLUTION_KEY = os.getenv("EVOLUTION_API_KEY", "")
+CRM_EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE_NAME", "")
+HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL", "300"))
+_last_alert_sent = {}
+ALERT_COOLDOWN_SECONDS = 900  # 15 min entre alertas iguais
+
+
+def check_project_health(project):
+    """Consulta a rota /api/health de um projeto e retorna o resultado."""
+    url = project["health_url"]
+    try:
+        import time as _time
+        _start = _time.time()
+        resp = requests.get(url, timeout=15)
+        _ms = int((_time.time() - _start) * 1000)
+
+        if resp.status_code == 200:
+            data = resp.json()
+            data["response_ms"] = _ms
+            data["reachable"] = True
+            return data
+        else:
+            return {
+                "project": project["id"],
+                "project_name": project["name"],
+                "overall": "down",
+                "reachable": True,
+                "response_ms": _ms,
+                "services": {},
+                "error": f"HTTP {resp.status_code}",
+                "checked_at": datetime.utcnow().isoformat()
+            }
+    except requests.exceptions.ConnectionError:
+        return {
+            "project": project["id"],
+            "project_name": project["name"],
+            "overall": "down",
+            "reachable": False,
+            "response_ms": None,
+            "services": {},
+            "error": "Connection refused — servidor offline ou URL errada",
+            "checked_at": datetime.utcnow().isoformat()
+        }
+    except requests.exceptions.Timeout:
+        return {
+            "project": project["id"],
+            "project_name": project["name"],
+            "overall": "down",
+            "reachable": False,
+            "response_ms": None,
+            "services": {},
+            "error": "Timeout — servidor não respondeu em 15s",
+            "checked_at": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        return {
+            "project": project["id"],
+            "project_name": project["name"],
+            "overall": "down",
+            "reachable": False,
+            "response_ms": None,
+            "services": {},
+            "error": str(e)[:200],
+            "checked_at": datetime.utcnow().isoformat()
+        }
+
+
+def check_all_projects():
+    """Consulta todos os projetos monitorados."""
+    results = []
+    for project in MONITORED_PROJECTS:
+        result = check_project_health(project)
+        result["icon"] = project.get("icon", "📦")
+        result["dashboard_url"] = project.get("dashboard_url", "")
+        result["critical"] = project.get("critical", False)
+        results.append(result)
+    return results
+
+
+def save_health_log(result):
+    """Grava o resultado da checagem no Supabase."""
+    if not supabase:
+        return
+    try:
+        supabase.table("health_logs").insert({
+            "project": result.get("project"),
+            "project_name": result.get("project_name"),
+            "overall": result.get("overall"),
+            "services": json.dumps(result.get("services", {})),
+            "alert_sent": result.get("_alert_sent", False),
+            "response_ms": result.get("response_ms"),
+            "checked_at": result.get("checked_at", datetime.utcnow().isoformat())
+        }).execute()
+    except Exception as e:
+        print(f"[HEALTH-LOG] Save error: {e}")
+
+
+def send_whatsapp_alert(message):
+    """Envia alerta via WhatsApp usando a Evolution API do CRM."""
+    if not all([CRM_EVOLUTION_URL, CRM_EVOLUTION_KEY, CRM_EVOLUTION_INSTANCE, ALERT_PHONE]):
+        print(f"[HEALTH-ALERT] WhatsApp not configured. Message: {message[:100]}")
+        return False
+
+    url = f"{CRM_EVOLUTION_URL}/message/sendText/{CRM_EVOLUTION_INSTANCE}"
+    headers = {"apikey": CRM_EVOLUTION_KEY, "Content-Type": "application/json"}
+    payload = {"number": ALERT_PHONE, "text": message}
+
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        print(f"[HEALTH-ALERT] WhatsApp sent: {resp.status_code}")
+        return resp.status_code in (200, 201)
+    except Exception as e:
+        print(f"[HEALTH-ALERT] WhatsApp error: {e}")
+        return False
+
+
+def should_send_alert(project_id):
+    """Cooldown: não envia o mesmo alerta a cada 5 min."""
+    import time as _time
+    now = _time.time()
+    last = _last_alert_sent.get(project_id, 0)
+    if now - last < ALERT_COOLDOWN_SECONDS:
+        return False
+    _last_alert_sent[project_id] = now
+    return True
+
+
+def process_alerts(results):
+    """Analisa resultados e envia alertas se necessário."""
+    for result in results:
+        overall = result.get("overall", "unknown")
+        project_id = result.get("project", "unknown")
+        project_name = result.get("project_name", project_id)
+        icon = result.get("icon", "📦")
+
+        if overall == "down" and result.get("critical", False):
+            if should_send_alert(project_id):
+                services = result.get("services", {})
+                down_services = [
+                    f"  ❌ {svc}: {info.get('detail', 'offline')}"
+                    for svc, info in services.items()
+                    if info.get("status") == "down"
+                ]
+                error_msg = result.get("error", "")
+
+                msg_lines = [
+                    f"🚨 *ALERTA: {icon} {project_name}*",
+                    f"",
+                    f"Status: *{overall.upper()}*",
+                    f"Horário: {datetime.utcnow().strftime('%H:%M UTC')}",
+                ]
+                if error_msg:
+                    msg_lines.append(f"Erro: {error_msg}")
+                if down_services:
+                    msg_lines.append(f"")
+                    msg_lines.append(f"Serviços com problema:")
+                    msg_lines.extend(down_services)
+                msg_lines.append(f"")
+                msg_lines.append(f"Verifique: {result.get('dashboard_url', 'N/A')}")
+
+                send_whatsapp_alert("\n".join(msg_lines))
+                result["_alert_sent"] = True
+
+        elif overall == "degraded":
+            services = result.get("services", {})
+            warning_services = [
+                svc for svc, info in services.items()
+                if info.get("status") in ("down", "warning")
+            ]
+            if warning_services and result.get("critical", False):
+                if should_send_alert(f"{project_id}_degraded"):
+                    msg = (
+                        f"⚠️ *{icon} {project_name} — degradado*\n\n"
+                        f"Serviços com problema: {', '.join(warning_services)}\n"
+                        f"O sistema está funcionando mas com limitações."
+                    )
+                    send_whatsapp_alert(msg)
+                    result["_alert_sent"] = True
+
+        elif overall == "up":
+            recovery_key = f"{project_id}_recovery"
+            if project_id in _last_alert_sent:
+                if should_send_alert(recovery_key):
+                    msg = f"✅ *{icon} {project_name} — voltou ao normal!*\n\nTodos os serviços estão funcionando."
+                    send_whatsapp_alert(msg)
+                    _last_alert_sent.pop(project_id, None)
+                    _last_alert_sent.pop(f"{project_id}_degraded", None)
+
+
+def _health_check_loop():
+    """Loop em background que checa os projetos automaticamente."""
+    import time as _time
+    _time.sleep(30)  # espera servidor subir
+    print(f"🏥 [HEALTH-MONITOR] Auto-check ativo! Intervalo: {HEALTH_CHECK_INTERVAL}s")
+
+    while True:
+        try:
+            results = check_all_projects()
+            process_alerts(results)
+            for result in results:
+                save_health_log(result)
+            statuses = [f"{r.get('icon','')} {r.get('overall','?')}" for r in results]
+            print(f"🏥 [HEALTH] {' | '.join(statuses)}")
+        except Exception as e:
+            print(f"🏥 [HEALTH-ERROR] {e}")
+        _time.sleep(HEALTH_CHECK_INTERVAL)
+
+
+def start_health_monitor():
+    """Inicia a thread de monitoramento em background."""
+    t = threading.Thread(target=_health_check_loop, daemon=True, name="health-monitor")
+    t.start()
+    print("🏥 [HEALTH-MONITOR] Thread de monitoramento iniciada")
+
+
+# --- ROTAS API DO HEALTH MONITOR ---
+
+@app.route("/api/health-monitor")
+@login_required
+def api_health_monitor():
+    """Roda health check em todos os projetos agora e retorna resultado."""
+    results = check_all_projects()
+    for result in results:
+        save_health_log(result)
+
+    return jsonify({
+        "projects": results,
+        "checked_at": datetime.utcnow().isoformat(),
+        "total": len(results),
+        "healthy": sum(1 for r in results if r.get("overall") == "up"),
+        "degraded": sum(1 for r in results if r.get("overall") == "degraded"),
+        "down": sum(1 for r in results if r.get("overall") == "down"),
+    })
+
+
+@app.route("/api/health-monitor/logs")
+@login_required
+def api_health_monitor_logs():
+    """Retorna as últimas 100 checagens de saúde."""
+    if not supabase:
+        return jsonify([])
+
+    project_filter = request.args.get("project")
+    try:
+        query = supabase.table("health_logs").select("*").order("checked_at", desc=True).limit(100)
+        if project_filter:
+            query = query.eq("project", project_filter)
+        result = query.execute()
+        return jsonify(result.data or [])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/health-monitor/test-alert", methods=["POST"])
+@login_required
+def api_test_health_alert():
+    """Envia um alerta de teste no WhatsApp."""
+    success = send_whatsapp_alert(
+        "🧪 *Teste de Alerta — Node Data Health Monitor*\n\n"
+        "Se você recebeu essa mensagem, o sistema de alertas está funcionando!\n"
+        f"Projetos monitorados: {len(MONITORED_PROJECTS)}\n"
+        f"Intervalo: {HEALTH_CHECK_INTERVAL}s"
+    )
+    return jsonify({"sent": success, "phone": ALERT_PHONE[:6] + "****" if ALERT_PHONE else "not configured"})
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
 if __name__ == "__main__":
     ensure_admin_exists()
+    start_health_monitor()
     port = int(os.getenv("PORT", 5010))
     print(f"🚀 CRM Node Data running on port {port}")
     if supabase:
