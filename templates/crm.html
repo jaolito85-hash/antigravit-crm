@@ -779,6 +779,7 @@
             <div class="nav-item" data-view="contratos"><i class="ri-file-shield-2-line"></i>Contratos</div>
             <div class="nav-item" data-view="documentos"><i class="ri-folder-2-line"></i>Documentos</div>
             <div class="nav-item" data-view="despesas"><i class="ri-money-dollar-circle-line"></i>Despesas</div>
+            <div class="nav-item" data-view="doc-empresa"><i class="ri-building-2-line"></i>Docs Empresa</div>
             <div class="nav-section">Operacional</div>
             <div class="nav-item" data-view="health"><i class="ri-pulse-line"></i>Health Monitor</div>
             {% if role == 'admin' %}
@@ -944,15 +945,31 @@
                             <tr>
                                 <th>Título</th>
                                 <th>Tipo</th>
-                                <th>Cliente</th>
+                                <th>Vinculado a</th>
                                 <th>Contrato</th>
                                 <th>Data</th>
+                                <th>Baixar</th>
                             </tr>
                         </thead>
                         <tbody id="docs-body"></tbody>
                     </table>
                 </div>
             </div>
+        </div>
+
+        <!-- ===== DOCUMENTOS DA EMPRESA ===== -->
+        <div class="view" id="view-doc-empresa">
+            <div class="page-header">
+                <div>
+                    <h1>Documentos da Empresa</h1>
+                    <p>CNPJ, contrato social, certidões, notas fiscais e documentos essenciais</p>
+                </div>
+                <button class="btn btn-primary" onclick="openModal('documento')"><i class="ri-add-line"></i>Novo Documento</button>
+            </div>
+
+            <div class="stats-grid" id="doc-empresa-stats"></div>
+
+            <div id="doc-empresa-cats"></div>
         </div>
 
         <!-- ===== DESPESAS ===== -->
@@ -1151,6 +1168,7 @@
             else if (v === 'tarefas') await loadTarefas();
             else if (v === 'contratos') await loadContratos();
             else if (v === 'documentos') await loadDocumentos();
+            else if (v === 'doc-empresa') await loadDocEmpresa();
             else if (v === 'despesas') await loadDespesas();
             else if (v === 'health') await loadHealth();
             else if (v === 'users') await loadUsers();
@@ -1274,15 +1292,88 @@
     </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:#555;padding:30px">Nenhum contrato</td></tr>';
         }
 
+        const DOC_TIPOS = {
+            contrato_social:'Contrato Social',cnpj:'Cartão CNPJ',inscricao_estadual:'Inscrição Estadual',inscricao_municipal:'Inscrição Municipal',
+            alvara:'Alvará',licenca:'Licença',certificado:'Certificado',
+            certidao_federal:'CND Federal',certidao_fgts:'Certidão FGTS',certidao_trabalhista:'CNDT',certidao_municipal:'CND Municipal',certidao_estadual:'CND Estadual',
+            nota_fiscal:'Nota Fiscal',balanco:'Balanço/DRE',
+            contrato:'Contrato',proposta:'Proposta',ordem_servico:'Ordem de Serviço',recibo:'Recibo',
+            procuracao:'Procuração',rg_cpf_socios:'RG/CPF Sócios',comprovante_endereco:'Comprovante Endereço',outro:'Outro'
+        };
+
         async function loadDocumentos() {
             const data = await api('/api/documentos');
             document.getElementById('docs-body').innerHTML = data.map(d => `<tr>
         <td>${d.url ? '<a href="' + d.url + '" target="_blank" style="color:var(--primary)">' + d.titulo + '</a>' : d.titulo}</td>
-        <td><span class="badge badge-purple">${d.tipo || '—'}</span></td>
-        <td>${d.leads?.nome || '—'}</td>
+        <td><span class="badge badge-purple">${DOC_TIPOS[d.tipo] || d.tipo || '—'}</span></td>
+        <td>${d.leads?.nome || d.entidades?.razao_social || '—'}</td>
         <td>${d.contratos?.nome || '—'}</td>
         <td>${fmtDate(d.created_at)}</td>
-    </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:#555;padding:30px">Nenhum documento</td></tr>';
+        <td>${d.url ? '<a href="' + d.url + '" target="_blank" style="color:var(--primary)"><i class="ri-download-line"></i></a>' : '—'}</td>
+    </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:#555;padding:30px">Nenhum documento</td></tr>';
+        }
+
+        const DOC_CATS = {
+            'Societário': { icon: '🏢', tipos: ['contrato_social','cnpj','inscricao_estadual','inscricao_municipal'], color: '#3b82f6' },
+            'Licenças': { icon: '📜', tipos: ['alvara','licenca','certificado'], color: '#eab308' },
+            'Certidões': { icon: '✅', tipos: ['certidao_federal','certidao_fgts','certidao_trabalhista','certidao_municipal','certidao_estadual'], color: '#22c55e' },
+            'Fiscal': { icon: '🧾', tipos: ['nota_fiscal','balanco'], color: '#a855f7' },
+            'Comercial': { icon: '📋', tipos: ['contrato','proposta','ordem_servico','recibo'], color: '#f97316' },
+            'Outros': { icon: '📁', tipos: ['procuracao','rg_cpf_socios','comprovante_endereco','outro'], color: '#6b7280' }
+        };
+
+        async function loadDocEmpresa() {
+            const data = await api('/api/documentos');
+
+            // Stats cards
+            let statsHtml = '';
+            for (const [cat, cfg] of Object.entries(DOC_CATS)) {
+                const count = data.filter(d => cfg.tipos.includes(d.tipo)).length;
+                statsHtml += `<div class="stat-card" style="border-left:3px solid ${cfg.color}">
+                    <div class="stat-value">${count}</div>
+                    <div class="stat-label">${cfg.icon} ${cat}</div>
+                </div>`;
+            }
+            document.getElementById('doc-empresa-stats').innerHTML = statsHtml;
+
+            // Categorized lists
+            let catsHtml = '';
+            for (const [cat, cfg] of Object.entries(DOC_CATS)) {
+                const catDocs = data.filter(d => cfg.tipos.includes(d.tipo));
+                catsHtml += `<div class="card" style="margin-top:16px;border-left:3px solid ${cfg.color}">
+                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+                        <h3>${cfg.icon} ${cat} (${catDocs.length})</h3>
+                        <button class="btn btn-primary" style="font-size:12px;padding:6px 12px" onclick="openModal('documento','${cfg.tipos[0]}')"><i class="ri-add-line"></i> Adicionar</button>
+                    </div>
+                    <div class="card-body">`;
+
+                if (catDocs.length === 0) {
+                    const missing = cfg.tipos.map(t => DOC_TIPOS[t] || t).join(', ');
+                    catsHtml += `<p style="color:#555;font-size:13px;padding:12px 0">Nenhum documento. Sugestão: ${missing}</p>`;
+                } else {
+                    catsHtml += '<table><thead><tr><th>Título</th><th>Tipo</th><th>Data</th><th>Baixar</th></tr></thead><tbody>';
+                    catDocs.forEach(d => {
+                        catsHtml += `<tr>
+                            <td>${d.titulo}</td>
+                            <td><span class="badge badge-purple">${DOC_TIPOS[d.tipo] || d.tipo}</span></td>
+                            <td>${fmtDate(d.created_at)}</td>
+                            <td>${d.url ? '<a href="'+d.url+'" target="_blank" style="color:var(--primary)"><i class="ri-download-line"></i> Baixar</a>' : '—'}</td>
+                        </tr>`;
+                    });
+                    catsHtml += '</tbody></table>';
+                }
+                catsHtml += '</div></div>';
+            }
+
+            // Missing categories hint
+            const allEmpty = Object.entries(DOC_CATS).filter(([,cfg]) => !data.some(d => cfg.tipos.includes(d.tipo)));
+            if (allEmpty.length > 0 && data.length > 0) {
+                catsHtml += `<div style="margin-top:16px;padding:12px 16px;background:var(--card-bg);border:1px dashed var(--border);border-radius:8px">
+                    <p style="color:#888;font-size:12px">📌 Categorias sem documentos: ${allEmpty.map(([c,cfg]) => cfg.icon + ' ' + c).join(', ')}</p>
+                </div>`;
+            }
+
+            document.getElementById('doc-empresa-cats').innerHTML = catsHtml;
         }
 
         async function loadDespesas() {
@@ -1540,7 +1631,7 @@
         }
 
         // === MODALS ===
-        async function openModal(type) {
+        async function openModal(type, extra) {
             if ((type === 'lead' || type === 'tarefa' || type === 'contrato' || type === 'documento' || type === 'despesa') && !verticaisCache.length) {
                 verticaisCache = await api('/api/verticais');
                 leadsCache = await api('/api/leads');
@@ -1549,7 +1640,7 @@
             if (type === 'lead') el.innerHTML = modalLead();
             else if (type === 'tarefa') el.innerHTML = modalTarefa();
             else if (type === 'contrato') el.innerHTML = modalContrato();
-            else if (type === 'documento') el.innerHTML = modalDocumento();
+            else if (type === 'documento') el.innerHTML = modalDocumento(extra);
             else if (type === 'despesa') el.innerHTML = modalDespesa();
             else if (type === 'user') el.innerHTML = modalUser();
             document.getElementById('modal-overlay').classList.add('active');
@@ -1688,13 +1779,56 @@
     <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div></form>`;
         }
 
-        function modalDocumento() {
+        function modalDocumento(presetTipo) {
+            const tipoVal = presetTipo || 'outro';
             return `<h3>Novo Documento</h3><form onsubmit="saveDocumento(event)">
-    <div class="form-group"><label>Título</label><input name="titulo" required></div>
-    <div class="form-row"><div class="form-group"><label>Tipo</label><select name="tipo"><option value="contrato">Contrato</option><option value="proposta">Proposta</option><option value="cnpj">CNPJ</option><option value="alvara">Alvará</option><option value="outro">Outro</option></select></div><div class="form-group"><label>Lead</label><select name="lead_id"><option value="">—</option>${leadOptions()}</select></div></div>
-    <div class="form-group"><label>URL do arquivo</label><input name="url" type="url" placeholder="https://..."></div>
+    <div class="form-group"><label>Título *</label><input name="titulo" required placeholder="Ex: Cartão CNPJ 2026"></div>
+    <div class="form-row">
+        <div class="form-group"><label>Tipo</label><select name="tipo">
+            <optgroup label="🏢 Societário">
+                <option value="contrato_social" ${tipoVal==='contrato_social'?'selected':''}>Contrato Social</option>
+                <option value="cnpj" ${tipoVal==='cnpj'?'selected':''}>Cartão CNPJ</option>
+                <option value="inscricao_estadual" ${tipoVal==='inscricao_estadual'?'selected':''}>Inscrição Estadual</option>
+                <option value="inscricao_municipal" ${tipoVal==='inscricao_municipal'?'selected':''}>Inscrição Municipal</option>
+            </optgroup>
+            <optgroup label="📜 Licenças">
+                <option value="alvara" ${tipoVal==='alvara'?'selected':''}>Alvará de Funcionamento</option>
+                <option value="licenca" ${tipoVal==='licenca'?'selected':''}>Licença (Ambiental/Sanitária)</option>
+                <option value="certificado" ${tipoVal==='certificado'?'selected':''}>Certificado (ISO/Qualidade)</option>
+            </optgroup>
+            <optgroup label="✅ Certidões">
+                <option value="certidao_federal" ${tipoVal==='certidao_federal'?'selected':''}>CND Federal</option>
+                <option value="certidao_fgts" ${tipoVal==='certidao_fgts'?'selected':''}>Certidão FGTS</option>
+                <option value="certidao_trabalhista" ${tipoVal==='certidao_trabalhista'?'selected':''}>CNDT Trabalhista</option>
+                <option value="certidao_municipal" ${tipoVal==='certidao_municipal'?'selected':''}>CND Municipal</option>
+                <option value="certidao_estadual" ${tipoVal==='certidao_estadual'?'selected':''}>CND Estadual</option>
+            </optgroup>
+            <optgroup label="🧾 Fiscal">
+                <option value="nota_fiscal" ${tipoVal==='nota_fiscal'?'selected':''}>Nota Fiscal</option>
+                <option value="balanco" ${tipoVal==='balanco'?'selected':''}>Balanço/DRE</option>
+            </optgroup>
+            <optgroup label="📋 Comercial">
+                <option value="contrato" ${tipoVal==='contrato'?'selected':''}>Contrato</option>
+                <option value="proposta" ${tipoVal==='proposta'?'selected':''}>Proposta Comercial</option>
+                <option value="ordem_servico" ${tipoVal==='ordem_servico'?'selected':''}>Ordem de Serviço</option>
+                <option value="recibo" ${tipoVal==='recibo'?'selected':''}>Recibo/Comprovante</option>
+            </optgroup>
+            <optgroup label="📁 Outros">
+                <option value="procuracao" ${tipoVal==='procuracao'?'selected':''}>Procuração</option>
+                <option value="rg_cpf_socios" ${tipoVal==='rg_cpf_socios'?'selected':''}>RG/CPF Sócios</option>
+                <option value="comprovante_endereco" ${tipoVal==='comprovante_endereco'?'selected':''}>Comprovante de Endereço</option>
+                <option value="outro" ${tipoVal==='outro'?'selected':''}>Outro</option>
+            </optgroup>
+        </select></div>
+        <div class="form-group"><label>Lead</label><select name="lead_id"><option value="">—</option>${leadOptions()}</select></div>
+    </div>
+    <div class="form-group"><label><i class="ri-upload-cloud-line"></i> Enviar arquivo do computador</label>
+        <input type="file" id="doc-file-input" style="padding:8px;border:2px dashed var(--border);border-radius:8px;width:100%;cursor:pointer">
+        <small id="doc-file-info" style="color:var(--primary);display:none;margin-top:4px"></small>
+    </div>
+    <div class="form-group"><label>Ou colar URL externo</label><input name="url" id="doc-url-input" type="url" placeholder="https://drive.google.com/..."></div>
     <div class="form-group"><label>Notas</label><textarea name="notas" rows="2"></textarea></div>
-    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div></form>`;
+    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary" id="doc-submit-btn">Salvar</button></div></form>`;
         }
 
         function modalDespesa() {
@@ -1721,7 +1855,42 @@
         async function saveLead(e) { await api('/api/leads', { method: 'POST', body: formData(e) }); closeModal(); loadLeads(); loadDashboard(); }
         async function saveTarefa(e) { await api('/api/tarefas', { method: 'POST', body: formData(e) }); closeModal(); loadTarefas(); }
         async function saveContrato(e) { await api('/api/contratos', { method: 'POST', body: formData(e) }); closeModal(); loadContratos(); }
-        async function saveDocumento(e) { await api('/api/documentos', { method: 'POST', body: formData(e) }); closeModal(); loadDocumentos(); }
+        async function saveDocumento(e) {
+            e.preventDefault();
+            const data = formData({preventDefault:()=>{}, target: e.target});
+            const fileInput = document.getElementById('doc-file-input');
+            const btn = document.getElementById('doc-submit-btn');
+
+            if (fileInput && fileInput.files && fileInput.files[0]) {
+                btn.textContent = 'Enviando arquivo...';
+                btn.disabled = true;
+                try {
+                    const fd = new FormData();
+                    fd.append('file', fileInput.files[0]);
+                    const resp = await fetch('/api/upload', { method: 'POST', body: fd });
+                    const result = await resp.json();
+                    if (result.url) {
+                        data.url = result.url;
+                    } else {
+                        alert('Erro no upload: ' + (result.error || 'Erro desconhecido'));
+                        btn.textContent = 'Salvar';
+                        btn.disabled = false;
+                        return;
+                    }
+                } catch (err) {
+                    alert('Erro ao enviar arquivo: ' + err.message);
+                    btn.textContent = 'Salvar';
+                    btn.disabled = false;
+                    return;
+                }
+            }
+
+            btn.textContent = 'Salvando...';
+            await api('/api/documentos', { method: 'POST', body: data });
+            closeModal();
+            loadDocumentos();
+            if (typeof loadDocEmpresa === 'function') loadDocEmpresa();
+        }
         async function saveDespesa(e) { await api('/api/despesas', { method: 'POST', body: formData(e) }); closeModal(); loadDespesas(); }
         async function deleteDespesa(id, descricao) {
             if (!confirm(`Excluir despesa "${descricao}"? Esta ação não pode ser desfeita.`)) return;

@@ -570,6 +570,53 @@ def api_create_documento():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/upload", methods=["POST"])
+@login_required
+@role_can_write
+def api_upload_file():
+    """Upload arquivo para Supabase Storage e retorna URL pública."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"error": "Storage não configurado"}), 503
+
+    if "file" not in request.files:
+        return jsonify({"error": "Nenhum arquivo enviado"}), 400
+
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "Arquivo sem nome"}), 400
+
+    # Gerar nome único
+    import uuid
+    ext = f.filename.rsplit(".", 1)[-1] if "." in f.filename else "bin"
+    safe_name = f"{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}.{ext}"
+
+    try:
+        # Upload via Supabase Storage REST API
+        upload_url = f"{SUPABASE_URL}/storage/v1/object/documentos/{safe_name}"
+        content_type = f.content_type or "application/octet-stream"
+        resp = requests.post(
+            upload_url,
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": content_type,
+            },
+            data=f.read(),
+            timeout=30,
+        )
+
+        if resp.status_code >= 400:
+            return jsonify({"error": f"Erro no upload: {resp.text[:200]}"}), 500
+
+        # URL pública
+        public_url = f"{SUPABASE_URL}/storage/v1/object/public/documentos/{safe_name}"
+        audit("upload", "documentos", None, f"Upload: {f.filename} -> {safe_name}")
+        return jsonify({"url": public_url, "filename": safe_name}), 201
+
+    except Exception as e:
+        return jsonify({"error": f"Falha no upload: {str(e)}"}), 500
+
+
 # ============================================================
 # API: HISTÓRICO DE AÇÕES
 # ============================================================
