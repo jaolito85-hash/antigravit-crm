@@ -949,6 +949,7 @@
                                 <th>Contrato</th>
                                 <th>Data</th>
                                 <th>Baixar</th>
+                                <th>Ações</th>
                             </tr>
                         </thead>
                         <tbody id="docs-body"></tbody>
@@ -1310,7 +1311,11 @@
         <td>${d.contratos?.nome || '—'}</td>
         <td>${fmtDate(d.created_at)}</td>
         <td>${d.url ? '<a href="' + d.url + '" target="_blank" style="color:var(--primary)"><i class="ri-download-line"></i></a>' : '—'}</td>
-    </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:#555;padding:30px">Nenhum documento</td></tr>';
+        <td>
+            <button onclick='editDocumento(${JSON.stringify(d).replace(/'/g,"&#39;")})' style="background:none;border:none;color:var(--primary);cursor:pointer;padding:4px" title="Editar"><i class="ri-edit-line"></i></button>
+            <button onclick="deleteDocumento('${d.id}','${(d.titulo||'').replace(/'/g,"\\'")}') " style="background:none;border:none;color:#f87171;cursor:pointer;padding:4px" title="Excluir"><i class="ri-delete-bin-line"></i></button>
+        </td>
+    </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:#555;padding:30px">Nenhum documento</td></tr>';
         }
 
         const DOC_CATS = {
@@ -1891,6 +1896,72 @@
             loadDocumentos();
             if (typeof loadDocEmpresa === 'function') loadDocEmpresa();
         }
+        async function deleteDocumento(id, titulo) {
+            if (!confirm(`Excluir documento "${titulo}"? Esta ação não pode ser desfeita.`)) return;
+            await api('/api/documentos/' + id, { method: 'DELETE' });
+            loadDocumentos();
+            if (typeof loadDocEmpresa === 'function') loadDocEmpresa();
+        }
+
+        function editDocumento(d) {
+            const el = document.getElementById('modal-content');
+            el.innerHTML = `<h3>Editar Documento</h3><form onsubmit="updateDocumento(event, '${d.id}')">
+    <div class="form-group"><label>Título *</label><input name="titulo" required value="${(d.titulo||'').replace(/"/g,'&quot;')}"></div>
+    <div class="form-row">
+        <div class="form-group"><label>Tipo</label><select name="tipo">
+            <optgroup label="🏢 Societário">
+                <option value="contrato_social" ${d.tipo==='contrato_social'?'selected':''}>Contrato Social</option>
+                <option value="cnpj" ${d.tipo==='cnpj'?'selected':''}>Cartão CNPJ</option>
+                <option value="inscricao_estadual" ${d.tipo==='inscricao_estadual'?'selected':''}>Inscrição Estadual</option>
+                <option value="inscricao_municipal" ${d.tipo==='inscricao_municipal'?'selected':''}>Inscrição Municipal</option>
+            </optgroup>
+            <optgroup label="📜 Licenças">
+                <option value="alvara" ${d.tipo==='alvara'?'selected':''}>Alvará</option>
+                <option value="licenca" ${d.tipo==='licenca'?'selected':''}>Licença</option>
+                <option value="certificado" ${d.tipo==='certificado'?'selected':''}>Certificado</option>
+            </optgroup>
+            <optgroup label="✅ Certidões">
+                <option value="certidao_federal" ${d.tipo==='certidao_federal'?'selected':''}>CND Federal</option>
+                <option value="certidao_fgts" ${d.tipo==='certidao_fgts'?'selected':''}>Certidão FGTS</option>
+                <option value="certidao_trabalhista" ${d.tipo==='certidao_trabalhista'?'selected':''}>CNDT</option>
+                <option value="certidao_municipal" ${d.tipo==='certidao_municipal'?'selected':''}>CND Municipal</option>
+                <option value="certidao_estadual" ${d.tipo==='certidao_estadual'?'selected':''}>CND Estadual</option>
+            </optgroup>
+            <optgroup label="🧾 Fiscal">
+                <option value="nota_fiscal" ${d.tipo==='nota_fiscal'?'selected':''}>Nota Fiscal</option>
+                <option value="balanco" ${d.tipo==='balanco'?'selected':''}>Balanço/DRE</option>
+            </optgroup>
+            <optgroup label="📋 Comercial">
+                <option value="contrato" ${d.tipo==='contrato'?'selected':''}>Contrato</option>
+                <option value="proposta" ${d.tipo==='proposta'?'selected':''}>Proposta</option>
+                <option value="ordem_servico" ${d.tipo==='ordem_servico'?'selected':''}>Ordem de Serviço</option>
+                <option value="recibo" ${d.tipo==='recibo'?'selected':''}>Recibo</option>
+            </optgroup>
+            <optgroup label="📁 Outros">
+                <option value="procuracao" ${d.tipo==='procuracao'?'selected':''}>Procuração</option>
+                <option value="rg_cpf_socios" ${d.tipo==='rg_cpf_socios'?'selected':''}>RG/CPF Sócios</option>
+                <option value="comprovante_endereco" ${d.tipo==='comprovante_endereco'?'selected':''}>Comprovante Endereço</option>
+                <option value="outro" ${d.tipo==='outro'?'selected':''}>Outro</option>
+            </optgroup>
+        </select></div>
+    </div>
+    <div class="form-group"><label>URL do arquivo</label><input name="url" type="url" value="${(d.url||'').replace(/"/g,'&quot;')}" placeholder="https://..."></div>
+    <div class="form-group"><label>Notas</label><textarea name="notas" rows="2">${d.notas||''}</textarea></div>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div></form>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        async function updateDocumento(e, id) {
+            e.preventDefault();
+            const fd = new FormData(e.target);
+            const data = {};
+            fd.forEach((v, k) => { data[k] = v || null; });
+            await api('/api/documentos/' + id, { method: 'PATCH', body: data });
+            closeModal();
+            loadDocumentos();
+            if (typeof loadDocEmpresa === 'function') loadDocEmpresa();
+        }
+
         async function saveDespesa(e) { await api('/api/despesas', { method: 'POST', body: formData(e) }); closeModal(); loadDespesas(); }
         async function deleteDespesa(id, descricao) {
             if (!confirm(`Excluir despesa "${descricao}"? Esta ação não pode ser desfeita.`)) return;

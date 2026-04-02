@@ -617,6 +617,35 @@ def api_upload_file():
         return jsonify({"error": f"Falha no upload: {str(e)}"}), 500
 
 
+@app.route("/api/documentos/<doc_id>", methods=["PATCH"])
+@login_required
+@role_can_write
+def api_update_documento(doc_id):
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    data = request.json
+    try:
+        result = supabase.table("documentos").update(data).eq("id", doc_id).execute()
+        audit("update", "documentos", doc_id, f"Editou doc: {data.get('titulo', '')}")
+        return jsonify(result.data[0] if result.data else {}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/documentos/<doc_id>", methods=["DELETE"])
+@login_required
+@role_can_write
+def api_delete_documento(doc_id):
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    try:
+        supabase.table("documentos").delete().eq("id", doc_id).execute()
+        audit("delete", "documentos", doc_id)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ============================================================
 # API: HISTÓRICO DE AÇÕES
 # ============================================================
