@@ -78,6 +78,26 @@ class SupabaseTable:
         self._params[col] = f"eq.{val}"
         return self
 
+    def neq(self, col, val):
+        self._params[col] = f"neq.{val}"
+        return self
+
+    def gt(self, col, val):
+        self._params[col] = f"gt.{val}"
+        return self
+
+    def gte(self, col, val):
+        self._params[col] = f"gte.{val}"
+        return self
+
+    def lt(self, col, val):
+        self._params[col] = f"lt.{val}"
+        return self
+
+    def lte(self, col, val):
+        self._params[col] = f"lte.{val}"
+        return self
+
     def order(self, col, desc=False):
         direction = "desc" if desc else "asc"
         existing = self._params.get("order", "")
