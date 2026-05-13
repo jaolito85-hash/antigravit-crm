@@ -2019,15 +2019,34 @@ def classify_message_with_ai(msg_id):
         # via fallback automatico (vide _AGENT_TEMP_DISABLED).
         _m = OPENAI_MODEL.lower()
         _is_reasoning = _m.startswith("o1") or _m.startswith("o3") or _m.startswith("o4") or "thinking" in _m or "reasoning" in _m
+
+        # EM CONTINUACAO DE THREAD: removemos perguntar_no_telegram das tools
+        # disponiveis. O agente JA fez essa pergunta na primeira passagem; agora
+        # tem a resposta. Forcar ele a EXECUTAR (criar_tarefa, etc) em vez de
+        # perguntar de novo. Resolve o caso em que modelos reasoning ficam
+        # perguntando em loop mesmo com contexto completo.
+        if thread_history:
+            tools_para_chamada = [
+                t for t in AI_TOOLS
+                if t.get("function", {}).get("name") != "perguntar_no_telegram"
+            ]
+            print(f"🔒 Continuacao detectada — perguntar_no_telegram bloqueada. Agente DEVE executar.")
+        else:
+            tools_para_chamada = AI_TOOLS
+
         _completion_kwargs = {
             "model": OPENAI_MODEL,
-            "tools": AI_TOOLS,
+            "tools": tools_para_chamada,
             "tool_choice": "required",
             "timeout": 90 if _is_reasoning else 45
         }
         global _AGENT_TEMP_DISABLED
         if not _is_reasoning and not _AGENT_TEMP_DISABLED:
             _completion_kwargs["temperature"] = 0.1
+
+        # Log do prompt enviado (truncado) pra debug rapido nos logs do Coolify
+        _u_preview = user_content[:300].replace("\n", " | ")
+        print(f"📨 user_content preview: {_u_preview}...")
 
         for i in range(max_iter):
             try:
