@@ -1609,57 +1609,83 @@
             return { photo: '🖼️ Foto', voice: '🎤 Áudio de voz', audio: '🎵 Áudio', video: '🎬 Vídeo', document: '📎 Documento', sticker: '🌟 Sticker' }[t] || t;
         }
 
-        const AI_ACTION_LABEL = {
-            criar_tarefa: 'Criar tarefa',
-            criar_nota_em_lead: 'Criar nota em lead',
-            anexar_a_lead: 'Anexar a lead',
-            arquivar: 'Arquivar',
-            nao_fazer_nada: 'Sem confiança — deixar pra você'
-        };
-        const AI_ACTION_ICON = {
-            criar_tarefa: 'ri-task-line',
-            criar_nota_em_lead: 'ri-sticky-note-line',
-            anexar_a_lead: 'ri-links-line',
-            arquivar: 'ri-archive-line',
-            nao_fazer_nada: 'ri-question-mark'
+        // O agente AGE, nao sugere. As actions abaixo sao as 7 tools que ele pode chamar.
+        const AGENT_ACTION_META = {
+            buscar_lead:        { label: 'Buscou leads',          icon: 'ri-search-line',       color: 'var(--text2)' },
+            criar_lead:         { label: 'Criou lead',            icon: 'ri-building-2-line',   color: 'var(--primary)' },
+            criar_contato:      { label: 'Criou contato',         icon: 'ri-user-add-line',     color: 'var(--primary)' },
+            criar_tarefa:       { label: 'Criou tarefa',          icon: 'ri-task-line',         color: 'var(--green)' },
+            registrar_acao:     { label: 'Registrou interação',   icon: 'ri-history-line',      color: 'var(--blue)' },
+            anexar_msg_a_lead:  { label: 'Anexou ao lead',        icon: 'ri-links-line',        color: 'var(--text2)' },
+            arquivar_msg:      { label: 'Arquivou',                icon: 'ri-archive-line',     color: 'var(--text2)' },
+            finalizar:          { label: 'Concluiu',              icon: 'ri-check-double-line', color: 'var(--green)' }
         };
 
         function aiBadgeHtml(m) {
-            if (m.ai_status === 'processed' && m.ai_proposed_action) {
-                const label = AI_ACTION_LABEL[m.ai_proposed_action] || m.ai_proposed_action;
-                const conf = typeof m.ai_confidence === 'number' ? Math.round(m.ai_confidence * 100) + '%' : '';
-                return `<div class="ai-badge"><i class="ri-sparkling-2-line"></i> IA sugere: ${escapeHTML(label)} ${conf ? `<span class="conf">· ${conf}</span>` : ''}</div>`;
+            if (m.ai_status === 'processed') {
+                const acts = Array.isArray(m.ai_actions_taken) ? m.ai_actions_taken : [];
+                // Conta acoes "uteis" (exclui buscar_lead e finalizar)
+                const useful = acts.filter(a => a.action && a.action !== 'buscar_lead' && a.action !== 'finalizar');
+                if (useful.length > 0) {
+                    return `<div class="ai-badge"><i class="ri-sparkling-2-line"></i> 🤖 IA executou ${useful.length} ${useful.length === 1 ? 'ação' : 'ações'}</div>`;
+                }
+                return `<div class="ai-badge pending"><i class="ri-sparkling-2-line"></i> 🤖 IA analisou — sem ações necessárias</div>`;
             }
-            if (m.ai_status === 'processing') return `<div class="ai-badge pending"><i class="ri-loader-4-line"></i> IA analisando…</div>`;
-            if (m.ai_status === 'pending') return `<div class="ai-badge pending"><i class="ri-time-line"></i> IA na fila…</div>`;
-            if (m.ai_status === 'error') return `<div class="ai-badge error" title="${escapeHTML(m.ai_reasoning || 'erro')}"><i class="ri-error-warning-line"></i> IA falhou</div>`;
+            if (m.ai_status === 'processing') return `<div class="ai-badge pending"><i class="ri-loader-4-line"></i> 🤖 Agente trabalhando…</div>`;
+            if (m.ai_status === 'pending') return `<div class="ai-badge pending"><i class="ri-time-line"></i> 🤖 Agente na fila…</div>`;
+            if (m.ai_status === 'skipped') return `<div class="ai-badge pending" title="${escapeHTML(m.ai_reasoning || '')}"><i class="ri-information-line"></i> 🤖 IA ignorou</div>`;
+            if (m.ai_status === 'error') return `<div class="ai-badge error" title="${escapeHTML(m.ai_reasoning || 'erro')}"><i class="ri-error-warning-line"></i> 🤖 IA falhou</div>`;
             return '';
         }
 
-        function aiPayloadSummaryHtml(action, payload) {
-            if (!payload) return '';
-            const rows = [];
-            const push = (k, v) => { if (v !== null && v !== undefined && v !== '') rows.push(`<div><span class="k">${k}:</span> <span class="v">${escapeHTML(String(v))}</span></div>`); };
-            if (action === 'criar_tarefa') {
-                push('Título', payload.titulo);
-                push('Responsável', payload.responsavel);
-                push('Prazo', payload.data_vencimento);
-                push('Prioridade', payload.prioridade);
-                push('Tipo', payload.tipo);
-                if (payload.lead_id) {
-                    const lead = leadsCache.find(l => l.id === payload.lead_id);
-                    push('Lead', lead ? lead.nome : payload.lead_id);
+        function renderActionTrace(actions) {
+            if (!Array.isArray(actions) || !actions.length) return '<div style="color:var(--text2);font-size:12px">Sem ações.</div>';
+            const rows = actions.map((a, idx) => {
+                const meta = AGENT_ACTION_META[a.action] || { label: a.action, icon: 'ri-arrow-right-line', color: 'var(--text2)' };
+                let detail = '';
+                let openBtn = '';
+                if (a.action === 'finalizar') {
+                    detail = escapeHTML(a.summary || '');
+                } else if (a.action === 'buscar_lead') {
+                    const n = a.result?.matches?.length || 0;
+                    detail = `${n} resultado${n === 1 ? '' : 's'} para "${escapeHTML((a.args && a.args.query) || '')}"`;
+                } else if (a.result?.ok === false) {
+                    detail = `<span style="color:var(--red)">erro: ${escapeHTML(a.result.error || 'desconhecido')}</span>`;
+                } else {
+                    const r = a.result || {};
+                    if (a.action === 'criar_lead' || a.action === 'criar_contato') {
+                        detail = escapeHTML(r.nome || '');
+                    } else if (a.action === 'criar_tarefa') {
+                        detail = escapeHTML(r.titulo || '');
+                        if (r.id) openBtn = `<a style="color:var(--primary);font-size:11px;cursor:pointer;margin-left:8px" onclick="closeModalAndOpenTarefa('${r.id}')">→ Abrir tarefa</a>`;
+                    } else if (a.action === 'registrar_acao') {
+                        detail = escapeHTML(r.tipo || '');
+                    } else if (a.action === 'anexar_msg_a_lead') {
+                        const lead = leadsCache.find(l => l.id === r.lead_id);
+                        detail = lead ? escapeHTML(lead.nome) : (r.lead_id || '');
+                    }
+                    if ((a.action === 'criar_lead' || a.action === 'criar_contato' || a.action === 'registrar_acao' || a.action === 'anexar_msg_a_lead') && (r.lead_id || (a.action === 'criar_lead' && r.id))) {
+                        const leadId = a.action === 'criar_lead' ? r.id : r.lead_id;
+                        openBtn = `<a style="color:var(--primary);font-size:11px;cursor:pointer;margin-left:8px" onclick="closeModalAndOpenLead('${leadId}')">→ Abrir lead</a>`;
+                    }
                 }
-                if (payload.descricao) push('Descrição', payload.descricao);
-            } else if (action === 'criar_nota_em_lead') {
-                const lead = leadsCache.find(l => l.id === payload.lead_id);
-                push('Lead', lead ? lead.nome : payload.lead_id);
-                push('Anotação', payload.anotacao);
-            } else if (action === 'anexar_a_lead') {
-                const lead = leadsCache.find(l => l.id === payload.lead_id);
-                push('Lead', lead ? lead.nome : payload.lead_id);
-            }
-            return rows.length ? `<div class="payload-summary">${rows.join('')}</div>` : '';
+                return `<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
+                    <i class="${meta.icon}" style="color:${meta.color};margin-top:2px"></i>
+                    <div style="flex:1;min-width:0">
+                        <div><strong>${idx + 1}.</strong> ${escapeHTML(meta.label)}</div>
+                        <div style="color:var(--text2);font-size:12px;margin-top:2px;word-break:break-word">${detail}${openBtn}</div>
+                    </div>
+                </div>`;
+            }).join('');
+            return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:4px 12px">${rows}</div>`;
+        }
+
+        async function closeModalAndOpenLead(leadId) {
+            closeModal();
+            // Garante leadsCache atualizado (pode ter sido recém-criado pela IA)
+            const fresh = await api('/api/leads');
+            if (Array.isArray(fresh)) leadsCache = fresh;
+            if (typeof openLeadDetail === 'function') openLeadDetail(leadId);
         }
 
         function updateInboxNavCount(n) {
@@ -1808,53 +1834,36 @@
         }
 
         function aiSuggestionBlock(m) {
-            // So mostra a caixa de sugestao se a IA processou (qualquer status ja propoe um botao util).
+            // Estados nao-terminais
             if (m.ai_status === 'pending' || m.ai_status === 'processing') {
-                return `<div class="detail-section"><h4>🤖 Sugestão da IA</h4>
-                    <div class="ai-badge pending"><i class="ri-loader-4-line"></i> Analisando… recarregue em alguns segundos.</div>
+                return `<div class="detail-section"><h4>🤖 Agente IA</h4>
+                    <div class="ai-badge pending"><i class="ri-loader-4-line"></i> Trabalhando… recarregue em alguns segundos.</div>
+                    <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="reclassificarMensagem('${m.id}')"><i class="ri-refresh-line"></i> Forçar reanálise</button>
                 </div>`;
             }
             if (m.ai_status === 'skipped') {
-                return `<div class="detail-section"><h4>🤖 Sugestão da IA</h4>
+                return `<div class="detail-section"><h4>🤖 Agente IA</h4>
                     <div class="ai-badge">${escapeHTML(m.ai_reasoning || 'IA ignorou esta mensagem.')}</div>
                 </div>`;
             }
             if (m.ai_status === 'error') {
-                return `<div class="detail-section"><h4>🤖 Sugestão da IA</h4>
+                return `<div class="detail-section"><h4>🤖 Agente IA</h4>
                     <div class="ai-badge error">Falha: ${escapeHTML(m.ai_reasoning || 'erro desconhecido')}</div>
                     <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="reclassificarMensagem('${m.id}')"><i class="ri-refresh-line"></i> Tentar de novo</button>
                 </div>`;
             }
-            if (m.ai_status !== 'processed' || !m.ai_proposed_action) return '';
+            if (m.ai_status !== 'processed') return '';
 
-            const action = m.ai_proposed_action;
-            const conf = typeof m.ai_confidence === 'number' ? m.ai_confidence : null;
-            const confPct = conf !== null ? Math.round(conf * 100) : null;
-            const label = AI_ACTION_LABEL[action] || action;
-            const icon = AI_ACTION_ICON[action] || 'ri-sparkling-2-line';
-            const payloadSummary = aiPayloadSummaryHtml(action, m.ai_payload);
+            const acts = Array.isArray(m.ai_actions_taken) ? m.ai_actions_taken : [];
+            const useful = acts.filter(a => a.action && a.action !== 'buscar_lead' && a.action !== 'finalizar');
+            const summary = m.ai_reasoning || '';
+            const empty = useful.length === 0;
 
-            let actionButtons = '';
-            const executable = ['criar_tarefa', 'criar_nota_em_lead', 'anexar_a_lead', 'arquivar'].includes(action);
-            if (executable && m.status === 'inbox') {
-                actionButtons = `
-                    <button class="btn btn-primary" onclick="aprovarSugestaoIA('${m.id}')"><i class="ri-check-double-line"></i> Aprovar sugestão</button>
-                    <button class="btn btn-ghost" onclick="editarAntesIA('${m.id}')"><i class="ri-edit-line"></i> Editar antes</button>
-                    <button class="btn btn-ghost" onclick="reclassificarMensagem('${m.id}')" title="Pedir IA pra reanalizar"><i class="ri-refresh-line"></i></button>`;
-            } else if (m.status === 'inbox') {
-                actionButtons = `
-                    <button class="btn btn-ghost" onclick="reclassificarMensagem('${m.id}')"><i class="ri-refresh-line"></i> Reanalizar</button>`;
-            } else {
-                actionButtons = `<span style="color:var(--text2);font-size:12px">Mensagem já triada.</span>`;
-            }
-
-            return `<div class="detail-section"><h4>🤖 Sugestão da IA</h4>
-                <div class="ai-suggestion-box">
-                    <div class="head"><i class="${icon}"></i> ${escapeHTML(label)} <span class="action-pill">${confPct !== null ? confPct + '%' : '—'}</span></div>
-                    ${confPct !== null ? `<div class="ai-confidence-bar"><span style="width:${confPct}%"></span></div>` : ''}
-                    ${m.ai_reasoning ? `<div class="reasoning">${escapeHTML(m.ai_reasoning)}</div>` : ''}
-                    ${payloadSummary}
-                    <div class="actions">${actionButtons}</div>
+            return `<div class="detail-section"><h4>🤖 Agente IA — ${empty ? 'analisou' : 'executou ' + useful.length + ' açõe' + (useful.length === 1 ? '' : 's')}</h4>
+                ${summary ? `<div style="color:var(--text);font-size:13px;line-height:1.5;margin-bottom:10px;font-style:italic">"${escapeHTML(summary)}"</div>` : ''}
+                ${renderActionTrace(acts)}
+                <div style="margin-top:10px;display:flex;gap:8px">
+                    <button class="btn btn-ghost btn-sm" onclick="reclassificarMensagem('${m.id}')"><i class="ri-refresh-line"></i> Reanalisar</button>
                 </div>
             </div>`;
         }
