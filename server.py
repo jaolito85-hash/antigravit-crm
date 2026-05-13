@@ -464,8 +464,21 @@ def api_update_tarefa(tarefa_id):
     if not supabase:
         return jsonify({"error": "DB offline"}), 503
     data = request.json
-    if data.get("concluida"):
+    # Sincroniza status <-> concluida (status e a fonte da verdade; concluida fica
+    # por compatibilidade com dashboard e Kanban antigo).
+    if "status" in data:
+        if data["status"] == "concluida":
+            data["concluida"] = True
+            data["concluida_em"] = datetime.now().isoformat()
+        else:
+            data["concluida"] = False
+            data["concluida_em"] = None
+    elif data.get("concluida"):
         data["concluida_em"] = datetime.now().isoformat()
+        data["status"] = "concluida"
+    elif "concluida" in data and not data["concluida"]:
+        data["concluida_em"] = None
+        data["status"] = "aberta"
     try:
         result = supabase.table("tarefas").update(data).eq("id", tarefa_id).execute()
         audit("update", "tarefas", tarefa_id, f"Atualizada: {json.dumps(list(data.keys()))}")
