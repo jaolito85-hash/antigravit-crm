@@ -1640,11 +1640,12 @@ TOOLS DE ESCRITA NO TELEGRAM (CRITICAS):
 - responder_no_telegram(resumo): OBRIGATORIA antes de finalizar. Sempre da feedback do que voce fez.
 
 REGRAS DE SEGURANCA (NUNCA QUEBRE):
-1. NUNCA marque reuniao sem data E hora claras. Se a mensagem diz "semana que vem" sem dia exato, PERGUNTE.
+1. NUNCA marque reuniao sem data E hora claras. Se a mensagem original diz "semana que vem" / "qualquer dia" sem precisao, faca: criar_lead + registrar_acao + perguntar_no_telegram pedindo data+hora. NAO crie tarefa de reuniao ainda. Quando a resposta vier (continuacao de thread), crie a tarefa de reuniao com data/hora exatas.
 2. NUNCA execute acao destrutiva (apagar lead, alterar contrato existente, cancelar tarefa de outro socio).
 3. NUNCA envie mensagem pra cliente externo. So perguntar_no_telegram e responder_no_telegram (que ficam no grupo interno).
 4. NUNCA invente lead_id. So use IDs que vieram do buscar_lead ou do retorno de criar_lead.
 5. Datas relativas CLARAS (amanha, sexta, dia 15, em 3 dias) calcule normalmente — NAO pergunte.
+6. Em CONTINUACAO DE THREAD (quando o user_content comecar com "⚠️ ESTA MENSAGEM E CONTINUACAO"), VOCE TEM TODO O CONTEXTO ja resumido. NAO trate como mensagem isolada. NAO pergunte coisa que ja esta listada como "JA executou". Combine a INTENCAO COMPLETA (pedido original + resposta atual) e execute.
 
 ═══════════════════════════════════════════════════
 WORKFLOW POR TIPO DE MENSAGEM:
@@ -1961,43 +1962,47 @@ def classify_message_with_ai(msg_id):
                         if q:
                             perguntas_pendentes.append(q)
 
+            # Mensagem CONSOLIDADA — combina pedido original + resposta atual como
+            # se fosse uma unica intencao do socio. Evita o modelo se confundir com
+            # historico cronologico que parece "conversa".
+            mensagem_original = (root_msg or {}).get("text") or "(sem texto)"
+            sender_orig = (root_msg or {}).get("sender_name") or sender
+            pergunta_pendente = perguntas_pendentes[-1] if perguntas_pendentes else None
+            lead_existente = leads_criados[0] if leads_criados else None
+
             ctx = []
-            ctx.append("═════════════════════════════════════════════════")
-            ctx.append("CONTINUACAO DE THREAD — voce JA conversou nesta thread.")
-            ctx.append("═════════════════════════════════════════════════")
-            if root_msg and root_msg.get("text"):
-                ctx.append(f'\nMensagem ORIGINAL do socio (inicio da conversa):\n"{root_msg["text"]}"')
-            if leads_criados:
-                ctx.append("\n📋 LEADS JA CRIADOS nesta thread (use estes IDs, NAO crie de novo):")
-                for l in leads_criados:
-                    ctx.append(f"  - {l.get('nome')} (lead_id: {l.get('id')})")
-            if contatos_criados:
-                ctx.append("\n👤 CONTATOS JA CRIADOS:")
-                for c in contatos_criados:
-                    ctx.append(f"  - {c.get('nome')} (contato_id: {c.get('id')}, lead_id: {c.get('lead_id')})")
-            if tarefas_criadas:
-                ctx.append("\n✅ TAREFAS JA CRIADAS:")
-                for t in tarefas_criadas:
-                    ctx.append(f"  - {t.get('titulo')} (tarefa_id: {t.get('id')}, lead_id: {t.get('lead_id')})")
-            if historicos_registrados:
-                ctx.append(f"\n📜 {historicos_registrados} registro(s) de historico_acoes ja criado(s) nesta thread.")
-            if perguntas_pendentes:
-                ctx.append("\n❓ PERGUNTAS QUE VOCE FEZ E ESTAO PENDENTES (a nova mensagem do socio deve ser a RESPOSTA):")
-                for q in perguntas_pendentes:
-                    ctx.append(f'  - "{q}"')
-            ctx.append("\n═════════════════════════════════════════════════")
-            ctx.append(f"NOVA MENSAGEM DO SOCIO ({sender}) — provavelmente a RESPOSTA as perguntas acima:")
-            ctx.append(f'"{msg["text"]}"')
-            ctx.append("═════════════════════════════════════════════════")
+            ctx.append(f"⚠️ ESTA MENSAGEM E CONTINUACAO DE UMA THREAD QUE VOCE JA INICIOU. NAO trate como mensagem isolada.")
             ctx.append("")
-            ctx.append("INSTRUCAO CRITICA:")
-            ctx.append("- A nova mensagem acima e a RESPOSTA do socio a perguntas que VOCE fez. USE-A pra completar a acao que faltava.")
-            ctx.append("- USE OS IDS de leads/contatos/tarefas que JA EXISTEM (listados acima). NUNCA crie duplicata.")
-            ctx.append("- Se a resposta complementa info que faltava (ex: data/hora de uma reuniao), crie a tarefa de reuniao usando o lead_id JA EXISTENTE.")
-            ctx.append("- NAO PERGUNTE de novo o que ja foi respondido nesta thread. O contexto e completo acima.")
-            ctx.append("- Termine com responder_no_telegram dando o resumo do que fez agora, depois finalizar.")
+            ctx.append(f"━━━━ CONTEXTO COMPLETO DA CONVERSA ━━━━")
+            ctx.append(f'1) {sender_orig} disse ORIGINALMENTE: "{mensagem_original}"')
+            ctx.append("")
+            ctx.append("2) Voce JA executou estas acoes na primeira passada:")
+            if lead_existente:
+                ctx.append(f"   ✅ Criou o lead \"{lead_existente['nome']}\" (lead_id: {lead_existente['id']}) ← USE ESTE ID, NAO CRIE OUTRO")
+            for c in contatos_criados:
+                ctx.append(f"   ✅ Criou contato {c.get('nome')} (contato_id: {c.get('id')})")
+            for t in tarefas_criadas:
+                ctx.append(f"   ✅ Criou tarefa \"{t.get('titulo')}\" (tarefa_id: {t.get('id')})")
+            if historicos_registrados:
+                ctx.append(f"   ✅ Registrou {historicos_registrados} acao(oes) no historico_acoes")
+            if pergunta_pendente:
+                ctx.append("")
+                ctx.append(f'3) Voce ENTAO perguntou: "{pergunta_pendente}"')
+            ctx.append("")
+            ctx.append(f'4) AGORA o socio respondeu: "{msg["text"]}"')
+            ctx.append("")
+            ctx.append("━━━━ INTENCAO COMPLETA DO SOCIO (combinada) ━━━━")
+            ctx.append(f'"{mensagem_original}" + "{msg["text"]}"')
+            ctx.append("")
+            ctx.append("━━━━ O QUE VOCE DEVE FAZER AGORA ━━━━")
+            if lead_existente:
+                ctx.append(f"- O lead JA EXISTE (id: {lead_existente['id']}). USE este id. NAO chame buscar_lead nem criar_lead.")
+            ctx.append("- Considere a INTENCAO COMPLETA acima. A nova resposta complementa o pedido original.")
+            ctx.append("- Se o pedido original era uma reuniao e agora voce tem data/hora, CRIE a tarefa de reuniao com tipo=reuniao, data_vencimento=<data calculada>, prioridade=alta, lead_id=<o existente>, responsavel=<quem mandou a mensagem original>.")
+            ctx.append("- responder_no_telegram com confirmacao do que voce fez, depois finalizar.")
+            ctx.append("- PROIBIDO perguntar de novo se ja foi respondido. Se ainda falta algo critico, peca de forma diferente.")
             user_content = "\n".join(ctx)
-            print(f"🧵 Thread carregada: {len(thread_history)} msgs, lead(s)={[l['nome'] for l in leads_criados]}, perg_pendentes={len(perguntas_pendentes)}")
+            print(f"🧵 Thread consolidada: lead={lead_existente['nome'] if lead_existente else '—'}, resp_atual=\"{msg['text'][:50]}\"")
         else:
             user_content = f"Mensagem de {sender} no grupo Telegram interno:\n\n{msg['text']}"
 
