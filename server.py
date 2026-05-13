@@ -1315,7 +1315,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 # AGENTE IA — passo 3 do roadmap. Classifica mensagens do Telegram
 # ============================================================
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1")
 openai_client = None
 if OPENAI_API_KEY:
     try:
@@ -1330,145 +1330,388 @@ else:
 
 # Tools (function calling). Cada uma exige confidence + reasoning.
 AI_TOOLS = [
+    # ===== LEITURA =====
+    {
+        "type": "function",
+        "function": {
+            "name": "buscar_lead",
+            "description": "Busca leads existentes por nome, cidade ou notas. USE SEMPRE antes de criar lead novo pra evitar duplicata. Retorna ate 10 matches.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Termo de busca (nome ou cidade do cliente)"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    # ===== ESCRITA — CRIA ENTIDADES =====
+    {
+        "type": "function",
+        "function": {
+            "name": "criar_lead",
+            "description": "Cria um novo lead/cliente. Use quando a mensagem menciona uma entidade nova (prefeitura, empresa, candidato) que nao apareceu em buscar_lead.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "nome": {"type": "string", "description": "Nome do lead. Ex: 'Prefeitura de Maringa', 'Atacaforte', 'Joao Silva (candidato)'"},
+                    "tipo": {"type": "string", "enum": ["empresa", "governo", "politico"]},
+                    "cidade": {"type": "string"},
+                    "estado": {"type": "string", "description": "Sigla UF (PR, SP, RJ, etc). Default PR se nao mencionado."},
+                    "vertical_id": {"type": ["string", "null"], "description": "UUID da vertical (use a lista abaixo se aplicavel) ou null"},
+                    "telefone": {"type": ["string", "null"]},
+                    "email": {"type": ["string", "null"]},
+                    "notas": {"type": ["string", "null"], "description": "Contexto inicial extraido da mensagem"}
+                },
+                "required": ["nome", "tipo", "cidade", "estado"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "criar_contato",
+            "description": "Cria uma pessoa (contato) dentro de um lead. Use quando a mensagem menciona uma pessoa especifica com nome (e geralmente telefone ou email).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string", "description": "UUID do lead onde a pessoa trabalha"},
+                    "nome": {"type": "string", "description": "Nome completo ou primeiro nome"},
+                    "telefone": {"type": ["string", "null"], "description": "So digitos. Ex: 44991548588"},
+                    "email": {"type": ["string", "null"]},
+                    "cargo": {"type": ["string", "null"]},
+                    "decisor": {"type": "boolean", "description": "True se a mensagem indica que e quem decide"},
+                    "influenciador": {"type": "boolean"}
+                },
+                "required": ["lead_id", "nome"]
+            }
+        }
+    },
     {
         "type": "function",
         "function": {
             "name": "criar_tarefa",
-            "description": "Cria uma nova tarefa a partir da mensagem. Use quando a mensagem pede uma acao concreta a ser feita (ligar pra X, preparar proposta, agendar reuniao, etc).",
+            "description": "Cria tarefa pra alguem fazer. Use quando a mensagem pede acao futura ('ligar amanha', 'preparar proposta', 'agendar demo'). Default responsavel = quem mandou a mensagem.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "titulo": {"type": "string", "description": "Titulo curto da tarefa (max 80 chars)"},
-                    "descricao": {"type": "string", "description": "Detalhamento opcional"},
-                    "responsavel": {"type": "string", "enum": ["Joao", "Guilherme", "Marcos"], "description": "Quem deve executar"},
-                    "data_vencimento": {"type": "string", "description": "Data ISO YYYY-MM-DD. Calcule baseado em DATA DE HOJE para termos relativos."},
+                    "titulo": {"type": "string", "description": "Titulo curto e claro. Ex: 'Ligar para Carlos sobre CPSI'. NUNCA copie a mensagem inteira."},
+                    "descricao": {"type": ["string", "null"], "description": "Contexto util da mensagem original"},
+                    "responsavel": {"type": "string", "enum": ["Joao", "Guilherme", "Marcos"]},
+                    "data_vencimento": {"type": "string", "description": "Data ISO YYYY-MM-DD. Calcule de DATA DE HOJE pra termos relativos (amanha, sexta, semana que vem)."},
                     "prioridade": {"type": "string", "enum": ["alta", "media", "baixa"]},
                     "tipo": {"type": "string", "enum": ["ligacao", "email", "reuniao", "visita", "demo", "proposta", "outro"]},
-                    "lead_id": {"type": ["string", "null"], "description": "UUID do lead da lista se mencionado; null se nao se aplica"},
-                    "confidence": {"type": "number", "description": "0.0-1.0 confianca nessa acao"},
-                    "reasoning": {"type": "string", "description": "Justificativa curta em PT-BR (max 200 chars)"}
+                    "lead_id": {"type": ["string", "null"], "description": "UUID do lead vinculado ou null"}
                 },
-                "required": ["titulo", "responsavel", "data_vencimento", "prioridade", "tipo", "confidence", "reasoning"]
+                "required": ["titulo", "responsavel", "data_vencimento", "prioridade", "tipo"]
             }
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "criar_nota_em_lead",
-            "description": "Registra a mensagem como anotacao no historico de um lead. Use quando a mensagem so registra um fato sobre um cliente, sem pedir acao (ex: 'falei com Cianorte hoje, eles gostaram').",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "lead_id": {"type": "string", "description": "UUID do lead da lista"},
-                    "anotacao": {"type": "string", "description": "Texto da nota (pode reformular a mensagem)"},
-                    "confidence": {"type": "number"},
-                    "reasoning": {"type": "string"}
-                },
-                "required": ["lead_id", "anotacao", "confidence", "reasoning"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "anexar_a_lead",
-            "description": "Vincula a mensagem a um lead sem criar tarefa nem nota — util quando a mensagem mostra contexto/foto/audio que vale guardar no historico do cliente mas nao precisa virar acao.",
+            "name": "registrar_acao",
+            "description": "Registra interacao JA ocorrida no historico do lead (passado, nao futuro). Use quando a msg conta algo que ja aconteceu: 'falei com X', 'mandei a proposta pro Y', 'demo foi otima'.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "lead_id": {"type": "string"},
-                    "confidence": {"type": "number"},
-                    "reasoning": {"type": "string"}
+                    "tipo": {"type": "string", "enum": ["ligacao", "email_enviado", "email_recebido", "whatsapp", "reuniao_virtual", "reuniao_presencial", "visita", "demo", "proposta_enviada", "proposta_aceita", "proposta_recusada", "anotacao"]},
+                    "descricao": {"type": "string", "description": "Resumo da interacao em PT-BR"},
+                    "resultado": {"type": ["string", "null"], "description": "Resultado ou proximo passo combinado, se houver"},
+                    "proximo_contato": {"type": ["string", "null"], "description": "Data ISO YYYY-MM-DD do proximo contato planejado"}
                 },
-                "required": ["lead_id", "confidence", "reasoning"]
+                "required": ["lead_id", "tipo", "descricao"]
             }
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "arquivar",
-            "description": "Marca a mensagem como arquivada. Use para mensagens triviais (bom dia, ok, emojis sozinhos, brincadeiras internas que nao tem valor de negocio).",
+            "name": "anexar_msg_a_lead",
+            "description": "Vincula a mensagem atual a um lead SEM criar tarefa nem registro. Use quando a mensagem so traz info contextual (foto, link, contato) que vale guardar mas nao precisa virar acao explicita.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "confidence": {"type": "number"},
-                    "reasoning": {"type": "string"}
-                },
-                "required": ["confidence", "reasoning"]
+                "properties": {"lead_id": {"type": "string"}},
+                "required": ["lead_id"]
             }
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "nao_fazer_nada",
-            "description": "Use quando voce nao tem confianca suficiente para decidir uma acao automatica (confidence < 0.5). A mensagem fica na Inbox para o socio triar manualmente.",
+            "name": "arquivar_msg",
+            "description": "Arquiva a mensagem (triviais, brincadeiras, emojis sozinhos, conversa solta sem valor de negocio).",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "finalizar",
+            "description": "OBRIGATORIA NO FIM. Chame depois de executar todas as outras tools necessarias. Encerra o processamento da mensagem.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "confidence": {"type": "number"},
-                    "reasoning": {"type": "string"}
+                    "summary": {"type": "string", "description": "Resumo em PT-BR do que voce fez (max 200 chars)"}
                 },
-                "required": ["confidence", "reasoning"]
+                "required": ["summary"]
             }
         }
     }
 ]
 
 
-def _build_ai_system_prompt():
-    """Monta o system prompt com contexto da empresa e leads atuais.
-    Como esse prompt fica praticamente igual entre chamadas, o OpenAI usa cache
-    automatico (50% desconto no input) quando ultrapassa 1024 tokens.
+def _build_agent_system_prompt():
+    """Prompt do agente — descreve empresa, sociedade, leads existentes, verticais
+    e workflow esperado. Como muda pouco entre chamadas, OpenAI usa prompt caching
+    automatico (50% off no input cacheado quando >1024 tokens).
     """
-    leads_data = []
+    leads_data, verticais_data = [], []
     if supabase:
         try:
-            res = supabase.table("leads").select("id, nome, status, cidade, estado, verticais(nome)").limit(200).execute()
-            leads_data = res.data or []
+            r = supabase.table("leads").select("id, nome, status, cidade, estado, verticais(nome)").limit(500).execute()
+            leads_data = r.data or []
         except Exception:
-            leads_data = []
+            pass
+        try:
+            r = supabase.table("verticais").select("id, nome, codigo").execute()
+            verticais_data = r.data or []
+        except Exception:
+            pass
+
     leads_str = "\n".join(
         f"- {l.get('nome', '?')} (id: {l['id']}, status: {l.get('status', '—')}, cidade: {l.get('cidade', '—')}/{l.get('estado', '—')}, vertical: {(l.get('verticais') or {}).get('nome', '—')})"
         for l in leads_data
-    ) or "(nenhum lead cadastrado)"
+    ) or "(nenhum lead cadastrado ainda)"
+
+    verticais_str = "\n".join(
+        f"- {v['nome']} (id: {v['id']}, codigo: {v.get('codigo', '—')})"
+        for v in verticais_data
+    ) or "(nenhuma vertical)"
 
     hoje = datetime.now().strftime("%Y-%m-%d")
-    return f"""Voce e o agente assistente operacional da Node Data — empresa que desenvolve software de inteligencia (analise de sentimento via WhatsApp) para prefeituras e campanhas politicas.
+    return f"""Voce e o AGENTE OPERACIONAL da Node Data — empresa que vende software de inteligencia (analise de sentimento de cidadaos via WhatsApp) para PREFEITURAS e CAMPANHAS POLITICAS.
 
 Os 3 socios sao:
 - Joao (dono, comercial e tecnico)
 - Guilherme (socio)
 - Marcos (socio)
 
-Voce le mensagens que eles trocam num grupo Telegram interno e propoe a acao mais apropriada para o CRM.
+VOCE TEM AUTONOMIA TOTAL para EXECUTAR acoes no CRM. Quando uma mensagem nova chega no grupo Telegram interno dos socios, voce deve:
+1. Extrair TODAS as entidades mencionadas (clientes, pessoas, telefones, prazos, valores, assuntos).
+2. Executar TODAS as acoes necessarias usando as tools (criar leads novos, criar contatos, registrar interacoes passadas, criar tarefas futuras).
+3. SEMPRE chamar `finalizar` no final com um resumo curto.
+
+VOCE NAO PROPOE — VOCE EXECUTA. Nao espera aprovacao.
 
 DATA DE HOJE: {hoje}
 
-LEADS NA BASE (use o id exato quando precisar vincular):
+LEADS EXISTENTES NO CRM (use o id exato quando referenciar):
 {leads_str}
 
-REGRAS DE CLASSIFICACAO:
-1. Se a mensagem menciona um cliente da lista, SEMPRE passe o lead_id correspondente.
-2. Para datas relativas (amanha, sexta, semana que vem), calcule a data ISO baseada em DATA DE HOJE.
-3. Mensagens triviais ("bom dia", "ok", "👍", emojis sozinhos) → arquivar.
-4. Mensagem registra um fato sobre cliente sem pedir acao → criar_nota_em_lead.
-5. Mensagem pede acao explicita ("preciso enviar proposta amanha", "ligar pro Paulo") → criar_tarefa.
-6. Mensagem traz contexto util pra guardar no lead (foto, audio, info recebida) mas sem acao → anexar_a_lead.
-7. Mensagem ambigua, varias interpretacoes possiveis, ou confidence < 0.5 → nao_fazer_nada (deixa pro humano triar).
-8. Reasoning sempre em PT-BR e curto (max 200 chars)."""
+VERTICAIS DISPONIVEIS (use o id em criar_lead quando aplicavel):
+{verticais_str}
+
+WORKFLOW POR TIPO DE MENSAGEM:
+
+A) Mensagem menciona NOVO cliente (ainda nao na lista de leads):
+  1. buscar_lead(query=nome do cliente) — SEMPRE primeiro, pra evitar duplicata
+  2. Se nao encontrou: criar_lead(nome, tipo, cidade, estado, ...). Para prefeituras tipo=governo. Para candidatos tipo=politico.
+  3. Se a mensagem menciona PESSOAS com nome+telefone: criar_contato pra cada uma, vinculadas ao lead
+  4. Se a mensagem conta acao JA ocorrida ("falei com", "mandei proposta"): registrar_acao no historico
+  5. Se a mensagem pede acao FUTURA ("ligar amanha", "preparar X"): criar_tarefa
+  6. finalizar(summary)
+
+B) Mensagem menciona cliente EXISTENTE:
+  1. Identifique o lead na lista acima pelo id
+  2. Mesmas etapas 3-6 do caso A
+
+C) Mensagem sem entidade clara mas com info util:
+  - Use anexar_msg_a_lead se relevante a algum cliente
+  - Caso contrario, deixe ela na inbox: chame so finalizar sem fazer nada
+
+D) Mensagem trivial (bom dia, ok, "kk", emoji sozinho, brincadeira):
+  - arquivar_msg + finalizar
+
+REGRAS DE OURO:
+
+- TITULO DE TAREFA: nunca copie a mensagem inteira. Faca curto e acionavel: "Ligar para Carlos sobre CPSI", "Preparar proposta Cianorte", "Visitar Atacaforte sexta".
+- DATA RELATIVA: calcule sempre baseado em DATA DE HOJE acima.
+- TELEFONE: extraia so digitos. "44 99154-8588" → "44991548588".
+- RESPONSAVEL DEFAULT da tarefa: o socio que MANDOU a mensagem (nao assume Joao se Marcos mandou).
+- Estado default: PR. Use outro so se a mensagem indicar.
+- Tipo de lead: prefeitura/secretaria = "governo", empresa privada = "empresa", candidato = "politico".
+- NUNCA invente lead_id. Use so o que veio da lista acima ou de criar_lead.
+- Em duvida entre acao e nota: se tem prazo futuro = tarefa, se e fato passado = registrar_acao.
+
+EXEMPLO:
+mensagem: "falei com pessoal da prefeitura de Maringa, me passaram o contato do carlos 44 991548588, precisa ligar pra ele amanha sobre CPSI"
+
+Workflow:
+1. buscar_lead(query="Maringa") → []
+2. criar_lead(nome="Prefeitura de Maringa", tipo="governo", cidade="Maringa", estado="PR")
+3. criar_contato(lead_id=<acima>, nome="Carlos", telefone="44991548588")
+4. registrar_acao(lead_id=<acima>, tipo="ligacao", descricao="Contato inicial com pessoal da prefeitura. Conseguiu o contato do Carlos.")
+5. criar_tarefa(titulo="Ligar para Carlos sobre CPSI", lead_id=<acima>, responsavel="Marcos", data_vencimento="{hoje}", prioridade="alta", tipo="ligacao", descricao="Carlos passou-se via prefeitura de Maringa. Falar sobre CPSI.")
+   (substitua a data_vencimento pela data de AMANHA calculada de DATA DE HOJE)
+6. finalizar(summary="Criei lead Prefeitura de Maringa, contato Carlos, registrei a interacao e criei tarefa de ligacao pra amanha.")
+
+Aja sempre. Voce e operacional, nao consultivo."""
+
+
+def _execute_tool(tool_name, args, msg_row, msg_id, user_label="Agente IA"):
+    """Executa uma tool no banco e retorna dict com {ok, ...} pro modelo continuar."""
+    if not supabase:
+        return {"ok": False, "error": "DB offline"}
+    try:
+        if tool_name == "buscar_lead":
+            q = (args.get("query") or "").lower().strip()
+            if not q:
+                return {"ok": True, "matches": []}
+            r = supabase.table("leads").select("id, nome, cidade, estado, status").limit(200).execute()
+            matches = []
+            for l in (r.data or []):
+                blob = ((l.get("nome") or "") + " " + (l.get("cidade") or "") + " " + (l.get("estado") or "")).lower()
+                if q in blob:
+                    matches.append(l)
+            return {"ok": True, "matches": matches[:10]}
+
+        if tool_name == "criar_lead":
+            data = {
+                "nome": args.get("nome"),
+                "tipo": args.get("tipo"),
+                "cidade": args.get("cidade"),
+                "estado": args.get("estado") or "PR",
+                "vertical_id": args.get("vertical_id"),
+                "telefone": args.get("telefone"),
+                "email": args.get("email"),
+                "notas": args.get("notas"),
+                "status": "Novo",
+                "origem": "Agente IA",
+                "responsavel": (msg_row or {}).get("sender_name") or "Agente IA"
+            }
+            data = {k: v for k, v in data.items() if v is not None}
+            r = supabase.table("leads").insert(data).execute()
+            new_id = r.data[0]["id"] if r.data else None
+            try:
+                audit("create", "leads", new_id, f"Agente IA criou lead: {data.get('nome')}")
+            except Exception:
+                pass
+            return {"ok": True, "id": new_id, "nome": data.get("nome"), "kind": "lead"}
+
+        if tool_name == "criar_contato":
+            data = {
+                "lead_id": args.get("lead_id"),
+                "nome": args.get("nome"),
+                "telefone": args.get("telefone"),
+                "email": args.get("email"),
+                "cargo": args.get("cargo"),
+                "decisor": bool(args.get("decisor")),
+                "influenciador": bool(args.get("influenciador"))
+            }
+            data = {k: v for k, v in data.items() if v is not None}
+            r = supabase.table("contatos").insert(data).execute()
+            new_id = r.data[0]["id"] if r.data else None
+            try:
+                audit("create", "contatos", new_id, f"Agente IA: contato {data.get('nome')}")
+            except Exception:
+                pass
+            return {"ok": True, "id": new_id, "nome": data.get("nome"), "lead_id": data.get("lead_id"), "kind": "contato"}
+
+        if tool_name == "criar_tarefa":
+            sender = (msg_row or {}).get("sender_name") or "Joao"
+            data = {
+                "titulo": (args.get("titulo") or "(sem titulo)")[:200],
+                "descricao": args.get("descricao") or (msg_row or {}).get("text"),
+                "responsavel": args.get("responsavel") or sender,
+                "data_vencimento": args.get("data_vencimento") or datetime.now().strftime("%Y-%m-%d"),
+                "prioridade": args.get("prioridade") or "media",
+                "tipo": args.get("tipo") or "outro",
+                "lead_id": args.get("lead_id"),
+                "status": "aberta"
+            }
+            data = {k: v for k, v in data.items() if v is not None}
+            r = supabase.table("tarefas").insert(data).execute()
+            new_id = r.data[0]["id"] if r.data else None
+            # Marca a mensagem como triada vinculando a tarefa
+            supabase.table("mensagens_socios").update({
+                "status": "triado",
+                "tarefa_id": new_id,
+                "lead_id": args.get("lead_id"),
+                "triado_em": datetime.now().isoformat(),
+                "triado_por": user_label
+            }).eq("id", msg_id).execute()
+            try:
+                audit("create", "tarefas", new_id, f"Agente IA: tarefa {data.get('titulo')}")
+            except Exception:
+                pass
+            return {"ok": True, "id": new_id, "titulo": data.get("titulo"), "lead_id": data.get("lead_id"), "kind": "tarefa"}
+
+        if tool_name == "registrar_acao":
+            data = {
+                "lead_id": args.get("lead_id"),
+                "tipo": args.get("tipo"),
+                "descricao": args.get("descricao"),
+                "resultado": args.get("resultado"),
+                "proximo_contato": args.get("proximo_contato"),
+                "responsavel": user_label
+            }
+            data = {k: v for k, v in data.items() if v is not None}
+            r = supabase.table("historico_acoes").insert(data).execute()
+            new_id = r.data[0]["id"] if r.data else None
+            supabase.table("mensagens_socios").update({
+                "status": "triado",
+                "lead_id": args.get("lead_id"),
+                "triado_em": datetime.now().isoformat(),
+                "triado_por": user_label
+            }).eq("id", msg_id).execute()
+            try:
+                audit("create", "historico_acoes", new_id, f"Agente IA: {data.get('tipo')}")
+            except Exception:
+                pass
+            return {"ok": True, "id": new_id, "tipo": data.get("tipo"), "lead_id": data.get("lead_id"), "kind": "historico"}
+
+        if tool_name == "anexar_msg_a_lead":
+            lead_id = args.get("lead_id")
+            supabase.table("mensagens_socios").update({
+                "status": "triado",
+                "lead_id": lead_id,
+                "triado_em": datetime.now().isoformat(),
+                "triado_por": user_label
+            }).eq("id", msg_id).execute()
+            try:
+                audit("update", "mensagens_socios", msg_id, f"Agente IA anexou ao lead {lead_id}")
+            except Exception:
+                pass
+            return {"ok": True, "lead_id": lead_id, "kind": "anexar"}
+
+        if tool_name == "arquivar_msg":
+            supabase.table("mensagens_socios").update({
+                "status": "arquivado",
+                "triado_em": datetime.now().isoformat(),
+                "triado_por": user_label
+            }).eq("id", msg_id).execute()
+            try:
+                audit("update", "mensagens_socios", msg_id, "Agente IA arquivou")
+            except Exception:
+                pass
+            return {"ok": True, "kind": "arquivar"}
+
+        return {"ok": False, "error": f"tool desconhecida: {tool_name}"}
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 def classify_message_with_ai(msg_id):
-    """Roda em thread daemon depois que webhook grava a mensagem.
-    Le a msg, classifica com OpenAI, atualiza row com a proposta da IA.
+    """Agente operacional: roda em thread daemon, le a mensagem, executa o
+    workflow completo (extrair entidades, criar leads/contatos/tarefas).
+    Em vez de propor, AGE diretamente no banco.
     """
     if not openai_client or not supabase:
         return
     try:
-        # Marca como em processamento
         supabase.table("mensagens_socios").update({"ai_status": "processing"}).eq("id", msg_id).execute()
 
         row = supabase.table("mensagens_socios").select("*").eq("id", msg_id).limit(1).execute()
@@ -1476,7 +1719,6 @@ def classify_message_with_ai(msg_id):
             return
         msg = row.data[0]
 
-        # Mensagens sem texto (so anexo) skipamos por enquanto
         if not msg.get("text"):
             supabase.table("mensagens_socios").update({
                 "ai_status": "skipped",
@@ -1485,52 +1727,82 @@ def classify_message_with_ai(msg_id):
             }).eq("id", msg_id).execute()
             return
 
-        system_prompt = _build_ai_system_prompt()
-        user_msg = f"De: {msg.get('sender_name') or msg.get('sender_username') or 'socio'}\n\nMensagem: {msg['text']}"
+        system_prompt = _build_agent_system_prompt()
+        sender = msg.get("sender_name") or msg.get("sender_username") or "socio"
+        user_content = f"Mensagem de {sender} no grupo Telegram interno:\n\n{msg['text']}"
 
-        completion = openai_client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_msg}
-            ],
-            tools=AI_TOOLS,
-            tool_choice="required",
-            temperature=0.2,
-            timeout=30
-        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content}
+        ]
+        actions_taken = []
+        max_iter = 6
+        final_summary = None
 
-        choice = completion.choices[0]
-        if not choice.message.tool_calls:
-            supabase.table("mensagens_socios").update({
-                "ai_status": "error",
-                "ai_reasoning": "Modelo nao chamou nenhuma tool.",
-                "ai_processed_at": datetime.now().isoformat()
-            }).eq("id", msg_id).execute()
-            return
+        for i in range(max_iter):
+            completion = openai_client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=messages,
+                tools=AI_TOOLS,
+                tool_choice="required",
+                temperature=0.1,
+                timeout=45
+            )
+            choice = completion.choices[0]
+            resp = choice.message
 
-        tool_call = choice.message.tool_calls[0]
-        action = tool_call.function.name
-        try:
-            args = json.loads(tool_call.function.arguments)
-        except Exception:
-            args = {}
+            if not resp.tool_calls:
+                # Modelo terminou sem chamar tool — registra e sai
+                break
 
-        confidence = args.pop("confidence", None)
-        reasoning = args.pop("reasoning", None)
+            # Anexa resposta do assistant no historico
+            assistant_msg = {"role": "assistant", "content": resp.content or "", "tool_calls": []}
+            for tc in resp.tool_calls:
+                assistant_msg["tool_calls"].append({
+                    "id": tc.id, "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments}
+                })
+            messages.append(assistant_msg)
 
-        supabase.table("mensagens_socios").update({
+            finalized = False
+            for tc in resp.tool_calls:
+                tool_name = tc.function.name
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except Exception:
+                    args = {}
+
+                if tool_name == "finalizar":
+                    final_summary = args.get("summary")
+                    actions_taken.append({"action": "finalizar", "summary": final_summary})
+                    # Anexa tool response (mesmo pra finalizar) pra fechar o ciclo
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps({"ok": True})})
+                    finalized = True
+                    continue
+
+                result = _execute_tool(tool_name, args, msg, msg_id)
+                actions_taken.append({"action": tool_name, "args": args, "result": result})
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(result, default=str)[:4000]
+                })
+
+            if finalized:
+                break
+
+        update = {
             "ai_status": "processed",
-            "ai_proposed_action": action,
-            "ai_confidence": confidence,
-            "ai_reasoning": reasoning,
-            "ai_payload": args,
+            "ai_reasoning": final_summary or "Agente nao finalizou explicitamente",
+            "ai_actions_taken": actions_taken,
             "ai_processed_at": datetime.now().isoformat()
-        }).eq("id", msg_id).execute()
-        print(f"🤖 IA classificou msg {str(msg_id)[:8]} → {action} (conf={confidence})")
+        }
+        # Mantem ai_proposed_action vazio (nao "proposta", executada)
+        supabase.table("mensagens_socios").update(update).eq("id", msg_id).execute()
+        print(f"🤖 Agente IA terminou msg {str(msg_id)[:8]}: {len(actions_taken)} ações — {final_summary or '(sem summary)'}")
 
     except Exception as e:
-        print(f"❌ classify_message_with_ai falhou: {e}")
+        print(f"❌ Agente IA falhou: {e}")
         try:
             supabase.table("mensagens_socios").update({
                 "ai_status": "error",
