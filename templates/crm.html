@@ -1611,21 +1611,31 @@
 
         // O agente AGE, nao sugere. As actions abaixo sao as 7 tools que ele pode chamar.
         const AGENT_ACTION_META = {
-            buscar_lead:        { label: 'Buscou leads',          icon: 'ri-search-line',       color: 'var(--text2)' },
-            criar_lead:         { label: 'Criou lead',            icon: 'ri-building-2-line',   color: 'var(--primary)' },
-            criar_contato:      { label: 'Criou contato',         icon: 'ri-user-add-line',     color: 'var(--primary)' },
-            criar_tarefa:       { label: 'Criou tarefa',          icon: 'ri-task-line',         color: 'var(--green)' },
-            registrar_acao:     { label: 'Registrou interação',   icon: 'ri-history-line',      color: 'var(--blue)' },
-            anexar_msg_a_lead:  { label: 'Anexou ao lead',        icon: 'ri-links-line',        color: 'var(--text2)' },
-            arquivar_msg:      { label: 'Arquivou',                icon: 'ri-archive-line',     color: 'var(--text2)' },
-            finalizar:          { label: 'Concluiu',              icon: 'ri-check-double-line', color: 'var(--green)' }
+            buscar_lead:           { label: 'Buscou leads',          icon: 'ri-search-line',       color: 'var(--text2)' },
+            criar_lead:            { label: 'Criou lead',            icon: 'ri-building-2-line',   color: 'var(--primary)' },
+            criar_contato:         { label: 'Criou contato',         icon: 'ri-user-add-line',     color: 'var(--primary)' },
+            criar_tarefa:          { label: 'Criou tarefa',          icon: 'ri-task-line',         color: 'var(--green)' },
+            registrar_acao:        { label: 'Registrou interação',   icon: 'ri-history-line',      color: 'var(--blue)' },
+            anexar_msg_a_lead:     { label: 'Anexou ao lead',        icon: 'ri-links-line',        color: 'var(--text2)' },
+            arquivar_msg:          { label: 'Arquivou',               icon: 'ri-archive-line',     color: 'var(--text2)' },
+            perguntar_no_telegram: { label: 'Perguntou no Telegram', icon: 'ri-question-line',     color: 'var(--yellow)' },
+            responder_no_telegram: { label: 'Respondeu no Telegram', icon: 'ri-message-2-line',    color: '#2aabee' },
+            finalizar:             { label: 'Concluiu',               icon: 'ri-check-double-line', color: 'var(--green)' }
         };
+
+        function aiHasPendingQuestion(m) {
+            if (!Array.isArray(m.ai_actions_taken)) return false;
+            return m.ai_actions_taken.some(a => a.action === 'perguntar_no_telegram' && a.result?.ok);
+        }
 
         function aiBadgeHtml(m) {
             if (m.ai_status === 'processed') {
                 const acts = Array.isArray(m.ai_actions_taken) ? m.ai_actions_taken : [];
-                // Conta acoes "uteis" (exclui buscar_lead e finalizar)
-                const useful = acts.filter(a => a.action && a.action !== 'buscar_lead' && a.action !== 'finalizar');
+                const askedQuestion = aiHasPendingQuestion(m);
+                if (askedQuestion && m.status === 'inbox') {
+                    return `<div class="ai-badge" style="background:linear-gradient(135deg,rgba(245,158,11,.15),rgba(99,102,241,.08));border-color:rgba(245,158,11,.4);color:var(--yellow)"><i class="ri-chat-3-line"></i> 💬 Agente aguardando sua resposta no Telegram</div>`;
+                }
+                const useful = acts.filter(a => a.action && a.action !== 'buscar_lead' && a.action !== 'finalizar' && a.action !== 'responder_no_telegram');
                 if (useful.length > 0) {
                     return `<div class="ai-badge"><i class="ri-sparkling-2-line"></i> 🤖 IA executou ${useful.length} ${useful.length === 1 ? 'ação' : 'ações'}</div>`;
                 }
