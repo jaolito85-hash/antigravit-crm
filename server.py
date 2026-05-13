@@ -1291,6 +1291,166 @@ def api_test_health_alert():
 
 
 # ============================================================
+# TELEGRAM WEBHOOK — Canal interno dos socios (passo 1 do roadmap)
+# ============================================================
+
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+TELEGRAM_ALLOWED_CHAT_ID = os.getenv("TELEGRAM_ALLOWED_CHAT_ID", "")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+
+
+def _mascara_id(valor):
+    """Mascara IDs do Telegram em log, mantendo so os 4 ultimos digitos."""
+    s = str(valor)
+    if len(s) > 4:
+        return "***" + s[-4:]
+    return "****"
+
+
+def _extrai_anexo(message):
+    """Extrai (tipo, file_id) de uma mensagem Telegram. Retorna (None, None) se nao tem anexo."""
+    if not isinstance(message, dict):
+        return None, None
+    if message.get("photo"):
+        photos = message["photo"]
+        if isinstance(photos, list) and photos:
+            # photo vem como array crescente de tamanhos; o maior fica no final
+            return "photo", photos[-1].get("file_id")
+    for tipo in ("voice", "audio", "video", "document", "sticker"):
+        anexo = message.get(tipo)
+        if isinstance(anexo, dict):
+            return tipo, anexo.get("file_id")
+    return None, None
+
+
+@app.route("/webhook/telegram", methods=["POST"])
+def webhook_telegram():
+    """Recebe updates do bot Telegram dos socios e grava em mensagens_socios.
+
+    Seguranca:
+    - Header X-Telegram-Bot-Api-Secret-Token == TELEGRAM_WEBHOOK_SECRET.
+    - chat_id deve bater com TELEGRAM_ALLOWED_CHAT_ID (grupo dos socios).
+    - Idempotente por (telegram_chat_id, telegram_message_id).
+    """
+    if not TELEGRAM_WEBHOOK_SECRET:
+        print("⚠️ webhook_telegram: TELEGRAM_WEBHOOK_SECRET nao configurado")
+        return jsonify({"error": "webhook nao configurado"}), 503
+
+    if request.headers.get("X-Telegram-Bot-Api-Secret-Token", "") != TELEGRAM_WEBHOOK_SECRET:
+        print(f"🚫 webhook_telegram: secret invalido de {request.remote_addr}")
+        return jsonify({"error": "nao autorizado"}), 401
+
+    update = request.get_json(silent=True) or {}
+    message = update.get("message") or update.get("edited_message") or update.get("channel_post")
+    if not isinstance(message, dict):
+        # Updates sem message (ex.: callback_query) — confirma 200 pra Telegram nao reenviar
+        return jsonify({"status": "ignorado"}), 200
+
+    chat_id = (message.get("chat") or {}).get("id")
+    message_id = message.get("message_id")
+    if chat_id is None or message_id is None:
+        return jsonify({"error": "payload incompleto"}), 400
+
+    # Whitelist do grupo dos socios — bloqueia chats desconhecidos
+    if TELEGRAM_ALLOWED_CHAT_ID:
+        try:
+            if int(chat_id) != int(TELEGRAM_ALLOWED_CHAT_ID):
+                print(f"🚫 webhook_telegram: chat {_mascara_id(chat_id)} fora da whitelist")
+                return jsonify({"status": "ignorado"}), 200
+        except (TypeError, ValueError):
+            print("⚠️ TELEGRAM_ALLOWED_CHAT_ID invalido — esperado inteiro")
+
+    if not supabase:
+        print("⚠️ webhook_telegram: supabase offline, descartando update")
+        return jsonify({"error": "db offline"}), 503
+
+    # Idempotencia: se ja existe, retorna 200 sem reinserir
+    try:
+        existing = supabase.table("mensagens_socios").select("id") \
+            .eq("telegram_chat_id", chat_id) \
+            .eq("telegram_message_id", message_id) \
+            .limit(1).execute()
+        if existing.data:
+            return jsonify({"status": "ja processado"}), 200
+    except Exception as e:
+        print(f"webhook_telegram: erro checando idempotencia: {e}")
+        # Segue — o unique constraint do banco e a rede de seguranca final
+
+    sender = message.get("from") or {}
+    attachment_type, attachment_file_id = _extrai_anexo(message)
+    nome_completo = (str(sender.get("first_name") or "") + " " + str(sender.get("last_name") or "")).strip()
+
+    registro = {
+        "telegram_message_id": message_id,
+        "telegram_chat_id": chat_id,
+        "telegram_user_id": sender.get("id"),
+        "sender_name": nome_completo or None,
+        "sender_username": sender.get("username"),
+        "text": message.get("text") or message.get("caption"),
+        "attachment_type": attachment_type,
+        "attachment_file_id": attachment_file_id,
+        "raw_payload": update,
+        "status": "inbox"
+    }
+
+    try:
+        result = supabase.table("mensagens_socios").insert(registro).execute()
+        inserted_id = result.data[0]["id"] if result.data else None
+        print(f"✅ telegram gravado: msg {_mascara_id(message_id)} chat {_mascara_id(chat_id)}")
+        try:
+            audit("create", "mensagens_socios", inserted_id, "telegram webhook")
+        except Exception as audit_err:
+            print(f"audit falhou (nao bloqueia): {audit_err}")
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        print(f"webhook_telegram: erro inserindo: {e}")
+        # Responde 200 pra Telegram nao entrar em loop de retry
+        return jsonify({"status": "erro interno", "saved": False}), 200
+
+
+# ============================================================
+# API: MENSAGENS DOS SOCIOS (Inbox — base para o Kanban no passo 2)
+# ============================================================
+
+@app.route("/api/mensagens-socios")
+@login_required
+def api_mensagens_socios():
+    if not supabase:
+        return jsonify([])
+    status_filter = request.args.get("status")
+    try:
+        query = supabase.table("mensagens_socios").select("*").order("created_at", desc=True).limit(200)
+        if status_filter:
+            query = query.eq("status", status_filter)
+        result = query.execute()
+        return jsonify(result.data or [])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/mensagens-socios/<msg_id>", methods=["PATCH"])
+@login_required
+@role_can_write
+def api_update_mensagem_socio(msg_id):
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    data = request.json or {}
+    # So aceita mudar campos de triagem — payload bruto e ids do Telegram sao imutaveis
+    permitido = {k: v for k, v in data.items() if k in ("status", "tarefa_id", "lead_id")}
+    if data.get("status") in ("triado", "arquivado"):
+        permitido["triado_em"] = datetime.now().isoformat()
+        permitido["triado_por"] = session.get("display_name", "sistema")
+    if not permitido:
+        return jsonify({"error": "nenhum campo permitido para atualizar"}), 400
+    try:
+        result = supabase.table("mensagens_socios").update(permitido).eq("id", msg_id).execute()
+        audit("update", "mensagens_socios", msg_id, f"campos: {list(permitido.keys())}")
+        return jsonify(result.data[0] if result.data else {})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
