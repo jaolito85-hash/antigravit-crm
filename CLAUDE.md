@@ -35,7 +35,7 @@ PRODUCTION_CHECKLIST.md    Regras de segurança/LGPD pré-deploy
 ```
 
 ### Tabelas Supabase em uso
-`crm_users`, `leads`, `verticais`, `tarefas`, `contratos`, `documentos`, `historico_acoes`, `contatos`, `despesas`, `metas`, `health_logs`, `audit_log`.
+`crm_users`, `leads`, `verticais`, `tarefas`, `contratos`, `documentos`, `historico_acoes`, `contatos`, `despesas`, `metas`, `health_logs`, `audit_log`, `mensagens_socios` (canal Telegram dos sócios) + tabelas-satélite por vertical (`governo_dados`, `escolas_dados`, `supermercados_dados` etc.).
 
 ### Módulos da UI (sidebar do CRM)
 Dashboard · Leads/Clientes · Tarefas · Contratos · Documentos · Despesas · Docs Empresa · Health Monitor · Usuários · Audit Log.
@@ -100,11 +100,18 @@ O CRM precisa ser o **cérebro operacional dos 3 sócios** (João + sócio + inv
 > ⚠️ Existe uma pasta local `crm-nodedata` no Windows do João que **não é repositório git** e não está conectada a nada — é um snapshot solto. **Não usar como referência.** A única fonte de verdade é este repo.
 
 ### Roadmap sugerido (ordem de impacto x esforço)
-1. Webhook Evolution API → endpoint `/webhook/sociedade` que grava mensagem bruta em uma nova tabela `mensagens_socios`.
-2. UI de Kanban consumindo a tabela `tarefas` (a tabela já existe — é só frontend).
-3. Agente IA classificando `mensagens_socios` → criando `tarefas` / atualizando `historico_acoes` / anexando em `leads`.
+1. ✅ **Webhook Telegram dos sócios** → `/webhook/telegram` grava em `mensagens_socios` (feito).
+2. UI de Kanban consumindo `mensagens_socios` + `tarefas` (tabelas existem — falta frontend).
+3. Agente IA classificando `mensagens_socios` → cria `tarefas` / atualiza `historico_acoes` / anexa em `leads`.
 4. Indexação de `documentos` + tool de busca no agente.
 5. Vertical "Campanha Política" com pipeline próprio (já tem `tipo=politico` em `contatos`).
+
+### Canal Telegram dos sócios (passo 1 — implementado)
+- Bot do Telegram (não WhatsApp/Evolution) — escolhido pra evitar risco de ban e custo de WhatsApp Business API.
+- Vars de ambiente: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_CHAT_ID`.
+- Endpoint público: `POST /webhook/telegram` valida header `X-Telegram-Bot-Api-Secret-Token` + whitelist por `chat_id`.
+- Idempotência por `(telegram_chat_id, telegram_message_id)` no banco.
+- Setup do webhook depois do deploy: `curl "https://api.telegram.org/bot<TOKEN>/setWebhook" -d "url=https://crm.nodedata.com.br/webhook/telegram" -d "secret_token=<SECRET>"`.
 
 ---
 
