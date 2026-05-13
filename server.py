@@ -2200,28 +2200,37 @@ def webhook_telegram():
     # o bot fez uma pergunta nos ultimos 60 min sem resposta, considera essa mensagem
     # como continuacao dessa thread. Resolve o caso comum do socio mandar
     # mensagem normal em vez de "reply" no Telegram.
+    #
+    # IMPORTANTE: nao filtramos por status='inbox' porque as tools do agente
+    # (criar_tarefa, registrar_acao) marcam a propria mensagem como 'triado'
+    # imediatamente — entao a msg root da thread ja vira 'triado' antes do
+    # socio responder. Filtrar por inbox deixava a heuristica cega.
+    #
+    # Em vez disso pegamos a ULTIMA mensagem do socio (anterior a atual) e
+    # checamos se ela tem perguntar_no_telegram pendente. Se a ultima msg do
+    # socio era outra conversa sem pergunta, nao associa (assunto mudou).
     if thread_root_id is None and supabase:
         try:
             cutoff = (datetime.now() - timedelta(minutes=60)).isoformat()
-            recent = supabase.table("mensagens_socios").select("telegram_message_id, ai_actions_taken, created_at") \
+            ultima = supabase.table("mensagens_socios").select("telegram_message_id, ai_actions_taken") \
                 .eq("telegram_chat_id", chat_id) \
                 .eq("from_bot", False) \
                 .eq("ai_status", "processed") \
-                .eq("status", "inbox") \
+                .lt("telegram_message_id", message_id) \
                 .gte("created_at", cutoff) \
-                .order("created_at", desc=True) \
-                .limit(5).execute()
-            for r in (recent.data or []):
-                acts = r.get("ai_actions_taken") or []
+                .order("telegram_message_id", desc=True) \
+                .limit(1).execute()
+            if ultima.data:
+                last = ultima.data[0]
+                acts = last.get("ai_actions_taken") or []
                 pediu_resposta = any(
                     isinstance(a, dict) and a.get("action") == "perguntar_no_telegram"
                     and (a.get("result") or {}).get("ok")
                     for a in acts
                 )
-                if pediu_resposta and r.get("telegram_message_id"):
-                    thread_root_id = r["telegram_message_id"]
+                if pediu_resposta and last.get("telegram_message_id"):
+                    thread_root_id = last["telegram_message_id"]
                     print(f"🧵 Continuacao implicita: msg {_mascara_id(message_id)} → thread {_mascara_id(thread_root_id)}")
-                    break
         except Exception as e:
             print(f"webhook_telegram: erro continuacao implicita: {e}")
 
