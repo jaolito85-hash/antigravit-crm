@@ -2189,8 +2189,10 @@ def classify_message_with_ai(msg_id):
                 break
 
         # Se essa mensagem era uma continuacao de thread e o agente conseguiu
-        # executar acoes uteis sem perguntar de novo, considera a thread RESOLVIDA
-        # e limpa o awaiting_user_response da root.
+        # executar acoes uteis sem perguntar de novo, considera a thread RESOLVIDA:
+        # limpa o awaiting_user_response E marca status='triado' na root tambem
+        # (pra Inbox da Caixa nao ficar poluida com a mensagem original).
+        now_iso = datetime.now().isoformat()
         replied_to = msg.get("replied_to_telegram_message_id")
         if replied_to:
             perguntou_de_novo = any(
@@ -2207,13 +2209,50 @@ def classify_message_with_ai(msg_id):
             )
             if executou_acao_util and not perguntou_de_novo:
                 try:
-                    supabase.table("mensagens_socios").update({"awaiting_user_response": False}) \
-                        .eq("telegram_chat_id", msg.get("telegram_chat_id")) \
+                    supabase.table("mensagens_socios").update({
+                        "awaiting_user_response": False,
+                        "status": "triado",
+                        "triado_em": now_iso,
+                        "triado_por": "Agente IA (thread resolvida)"
+                    }).eq("telegram_chat_id", msg.get("telegram_chat_id")) \
                         .eq("telegram_message_id", replied_to) \
                         .execute()
-                    print(f"✅ Thread resolvida: root tg_id={replied_to} marcada awaiting=false")
+                    print(f"✅ Thread resolvida: root tg_id={replied_to} marcada triado")
                 except Exception as e:
-                    print(f"⚠️ erro limpando awaiting da root: {e}")
+                    print(f"⚠️ erro resolvendo thread root: {e}")
+
+        # AUTO-ARQUIVAR: se a mensagem foi processada mas o agente nao gerou
+        # NENHUMA acao util (so respondeu/comentou) e nao perguntou nada, arquiva
+        # automaticamente pra nao poluir a Inbox. Mensagens como "ok", "valeu",
+        # "ja criou a tarefa, esta tudo certo" caem aqui — sao confirmacoes do
+        # socio, nao tem motivo pra ficar na inbox.
+        fez_alguma_acao_de_dados = any(
+            isinstance(a, dict) and a.get("action") in (
+                "criar_tarefa", "criar_lead", "criar_contato",
+                "registrar_acao", "anexar_msg_a_lead"
+            ) and (a.get("result") or {}).get("ok")
+            for a in actions_taken
+        )
+        perguntou = any(
+            isinstance(a, dict) and a.get("action") == "perguntar_no_telegram"
+            and (a.get("result") or {}).get("ok")
+            for a in actions_taken
+        )
+        arquivou_explicitamente = any(
+            isinstance(a, dict) and a.get("action") == "arquivar_msg"
+            and (a.get("result") or {}).get("ok")
+            for a in actions_taken
+        )
+        if not fez_alguma_acao_de_dados and not perguntou and not arquivou_explicitamente:
+            try:
+                supabase.table("mensagens_socios").update({
+                    "status": "arquivado",
+                    "triado_em": now_iso,
+                    "triado_por": "Agente IA (sem acao necessaria)"
+                }).eq("id", msg_id).execute()
+                print(f"📦 Mensagem auto-arquivada (agente nao precisou agir)")
+            except Exception as e:
+                print(f"⚠️ erro auto-arquivando: {e}")
 
         update = {
             "ai_status": "processed",
