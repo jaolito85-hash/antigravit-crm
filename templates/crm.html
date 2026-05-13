@@ -823,6 +823,22 @@
         .timeline-item .resp { font-size: 11px; color: var(--text2); margin-top: 2px }
         .tab-empty { text-align: center; padding: 30px; color: var(--text2); font-size: 13px }
 
+        /* AGENTE IA (passo 3) */
+        .ai-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 500; background: linear-gradient(135deg, rgba(99,102,241,.12), rgba(16,185,129,.12)); border: 1px solid rgba(99,102,241,.3); color: var(--primary); margin-top: 8px }
+        .ai-badge .conf { color: var(--text2); font-size: 10px; font-weight: 400 }
+        .ai-badge.pending { background: var(--surface2); border-color: var(--border); color: var(--text2) }
+        .ai-badge.error { background: rgba(239,68,68,.08); border-color: rgba(239,68,68,.3); color: var(--red) }
+        .ai-suggestion-box { background: linear-gradient(135deg, rgba(99,102,241,.08), rgba(16,185,129,.04)); border: 1px solid rgba(99,102,241,.25); border-radius: 10px; padding: 14px; margin-top: 6px }
+        .ai-suggestion-box .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; font-weight: 600; color: var(--primary) }
+        .ai-suggestion-box .action-pill { padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--primary); color: #fff; margin-left: auto }
+        .ai-suggestion-box .reasoning { font-size: 13px; color: var(--text); margin-bottom: 10px; line-height: 1.5 }
+        .ai-suggestion-box .payload-summary { font-size: 12px; color: var(--text2); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px }
+        .ai-suggestion-box .payload-summary .k { color: var(--text2) }
+        .ai-suggestion-box .payload-summary .v { color: var(--text); font-weight: 500 }
+        .ai-suggestion-box .actions { display: flex; gap: 8px; flex-wrap: wrap }
+        .ai-confidence-bar { height: 4px; background: var(--surface); border-radius: 2px; overflow: hidden; margin-bottom: 10px }
+        .ai-confidence-bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--red), var(--yellow), var(--green)); transition: width .5s }
+
         @media(max-width:768px) {
             .sidebar {
                 display: none
@@ -1593,6 +1609,59 @@
             return { photo: '🖼️ Foto', voice: '🎤 Áudio de voz', audio: '🎵 Áudio', video: '🎬 Vídeo', document: '📎 Documento', sticker: '🌟 Sticker' }[t] || t;
         }
 
+        const AI_ACTION_LABEL = {
+            criar_tarefa: 'Criar tarefa',
+            criar_nota_em_lead: 'Criar nota em lead',
+            anexar_a_lead: 'Anexar a lead',
+            arquivar: 'Arquivar',
+            nao_fazer_nada: 'Sem confiança — deixar pra você'
+        };
+        const AI_ACTION_ICON = {
+            criar_tarefa: 'ri-task-line',
+            criar_nota_em_lead: 'ri-sticky-note-line',
+            anexar_a_lead: 'ri-links-line',
+            arquivar: 'ri-archive-line',
+            nao_fazer_nada: 'ri-question-mark'
+        };
+
+        function aiBadgeHtml(m) {
+            if (m.ai_status === 'processed' && m.ai_proposed_action) {
+                const label = AI_ACTION_LABEL[m.ai_proposed_action] || m.ai_proposed_action;
+                const conf = typeof m.ai_confidence === 'number' ? Math.round(m.ai_confidence * 100) + '%' : '';
+                return `<div class="ai-badge"><i class="ri-sparkling-2-line"></i> IA sugere: ${escapeHTML(label)} ${conf ? `<span class="conf">· ${conf}</span>` : ''}</div>`;
+            }
+            if (m.ai_status === 'processing') return `<div class="ai-badge pending"><i class="ri-loader-4-line"></i> IA analisando…</div>`;
+            if (m.ai_status === 'pending') return `<div class="ai-badge pending"><i class="ri-time-line"></i> IA na fila…</div>`;
+            if (m.ai_status === 'error') return `<div class="ai-badge error" title="${escapeHTML(m.ai_reasoning || 'erro')}"><i class="ri-error-warning-line"></i> IA falhou</div>`;
+            return '';
+        }
+
+        function aiPayloadSummaryHtml(action, payload) {
+            if (!payload) return '';
+            const rows = [];
+            const push = (k, v) => { if (v !== null && v !== undefined && v !== '') rows.push(`<div><span class="k">${k}:</span> <span class="v">${escapeHTML(String(v))}</span></div>`); };
+            if (action === 'criar_tarefa') {
+                push('Título', payload.titulo);
+                push('Responsável', payload.responsavel);
+                push('Prazo', payload.data_vencimento);
+                push('Prioridade', payload.prioridade);
+                push('Tipo', payload.tipo);
+                if (payload.lead_id) {
+                    const lead = leadsCache.find(l => l.id === payload.lead_id);
+                    push('Lead', lead ? lead.nome : payload.lead_id);
+                }
+                if (payload.descricao) push('Descrição', payload.descricao);
+            } else if (action === 'criar_nota_em_lead') {
+                const lead = leadsCache.find(l => l.id === payload.lead_id);
+                push('Lead', lead ? lead.nome : payload.lead_id);
+                push('Anotação', payload.anotacao);
+            } else if (action === 'anexar_a_lead') {
+                const lead = leadsCache.find(l => l.id === payload.lead_id);
+                push('Lead', lead ? lead.nome : payload.lead_id);
+            }
+            return rows.length ? `<div class="payload-summary">${rows.join('')}</div>` : '';
+        }
+
         function updateInboxNavCount(n) {
             const el = document.getElementById('nav-caixa-count');
             if (!el) return;
@@ -1662,12 +1731,14 @@
                         <button class="btn btn-ghost" style="margin-left:8px;padding:4px 10px;font-size:11px" onclick="event.stopPropagation();desarquivarMensagem('${m.id}')"><i class="ri-arrow-go-back-line"></i> Desarquivar</button>
                     </div>`;
                 }
+                const aiBadge = aiBadgeHtml(m);
                 return `<div class="inbox-card" onclick="openMensagemDetail('${m.id}')" style="cursor:pointer">
                     <div class="inbox-card-header">
                         <div class="inbox-from"><i class="ri-telegram-2-line"></i><strong>${sender}</strong><span class="inbox-time">${fmtRelTime(m.created_at)}</span></div>
                     </div>
                     ${att}
                     ${textHtml}
+                    ${aiBadge}
                     ${footer}
                 </div>`;
             }).join('');
@@ -1710,6 +1781,7 @@
                 </div>`;
             }
             const rawPayloadStr = m.raw_payload ? escapeHTML(JSON.stringify(m.raw_payload, null, 2)) : '';
+            const aiBlock = aiSuggestionBlock(m);
             const el = document.getElementById('modal-content');
             el.classList.add('wide');
             el.innerHTML = `<h3><i class="ri-telegram-2-line" style="color:#2aabee"></i> Mensagem de ${sender}</h3>
@@ -1726,12 +1798,190 @@
                     ${att}
                     ${text}
                 </div>
+                ${aiBlock}
                 ${acoesBlock}
                 ${rawPayloadStr ? `<details class="raw-debug"><summary>Payload bruto (debug)</summary><pre>${rawPayloadStr}</pre></details>` : ''}
                 <div style="margin-top:14px;display:flex;justify-content:flex-end">
                     <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>
                 </div>`;
             document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function aiSuggestionBlock(m) {
+            // So mostra a caixa de sugestao se a IA processou (qualquer status ja propoe um botao util).
+            if (m.ai_status === 'pending' || m.ai_status === 'processing') {
+                return `<div class="detail-section"><h4>🤖 Sugestão da IA</h4>
+                    <div class="ai-badge pending"><i class="ri-loader-4-line"></i> Analisando… recarregue em alguns segundos.</div>
+                </div>`;
+            }
+            if (m.ai_status === 'skipped') {
+                return `<div class="detail-section"><h4>🤖 Sugestão da IA</h4>
+                    <div class="ai-badge">${escapeHTML(m.ai_reasoning || 'IA ignorou esta mensagem.')}</div>
+                </div>`;
+            }
+            if (m.ai_status === 'error') {
+                return `<div class="detail-section"><h4>🤖 Sugestão da IA</h4>
+                    <div class="ai-badge error">Falha: ${escapeHTML(m.ai_reasoning || 'erro desconhecido')}</div>
+                    <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="reclassificarMensagem('${m.id}')"><i class="ri-refresh-line"></i> Tentar de novo</button>
+                </div>`;
+            }
+            if (m.ai_status !== 'processed' || !m.ai_proposed_action) return '';
+
+            const action = m.ai_proposed_action;
+            const conf = typeof m.ai_confidence === 'number' ? m.ai_confidence : null;
+            const confPct = conf !== null ? Math.round(conf * 100) : null;
+            const label = AI_ACTION_LABEL[action] || action;
+            const icon = AI_ACTION_ICON[action] || 'ri-sparkling-2-line';
+            const payloadSummary = aiPayloadSummaryHtml(action, m.ai_payload);
+
+            let actionButtons = '';
+            const executable = ['criar_tarefa', 'criar_nota_em_lead', 'anexar_a_lead', 'arquivar'].includes(action);
+            if (executable && m.status === 'inbox') {
+                actionButtons = `
+                    <button class="btn btn-primary" onclick="aprovarSugestaoIA('${m.id}')"><i class="ri-check-double-line"></i> Aprovar sugestão</button>
+                    <button class="btn btn-ghost" onclick="editarAntesIA('${m.id}')"><i class="ri-edit-line"></i> Editar antes</button>
+                    <button class="btn btn-ghost" onclick="reclassificarMensagem('${m.id}')" title="Pedir IA pra reanalizar"><i class="ri-refresh-line"></i></button>`;
+            } else if (m.status === 'inbox') {
+                actionButtons = `
+                    <button class="btn btn-ghost" onclick="reclassificarMensagem('${m.id}')"><i class="ri-refresh-line"></i> Reanalizar</button>`;
+            } else {
+                actionButtons = `<span style="color:var(--text2);font-size:12px">Mensagem já triada.</span>`;
+            }
+
+            return `<div class="detail-section"><h4>🤖 Sugestão da IA</h4>
+                <div class="ai-suggestion-box">
+                    <div class="head"><i class="${icon}"></i> ${escapeHTML(label)} <span class="action-pill">${confPct !== null ? confPct + '%' : '—'}</span></div>
+                    ${confPct !== null ? `<div class="ai-confidence-bar"><span style="width:${confPct}%"></span></div>` : ''}
+                    ${m.ai_reasoning ? `<div class="reasoning">${escapeHTML(m.ai_reasoning)}</div>` : ''}
+                    ${payloadSummary}
+                    <div class="actions">${actionButtons}</div>
+                </div>
+            </div>`;
+        }
+
+        async function aprovarSugestaoIA(msgId) {
+            const r = await api('/api/mensagens-socios/' + msgId + '/aprovar-ia', { method: 'POST' });
+            if (r.error) { alert('Erro: ' + r.error); return; }
+            closeModal();
+            loadCaixaEntrada();
+            if (typeof loadDashboard === 'function') loadDashboard();
+        }
+
+        async function reclassificarMensagem(msgId) {
+            const r = await api('/api/mensagens-socios/' + msgId + '/reclassificar', { method: 'POST' });
+            if (r.error) { alert(r.error); return; }
+            // Marca localmente como processing e atualiza UI
+            const m = findMensagem(msgId);
+            if (m) m.ai_status = 'processing';
+            renderCaixa();
+            // Reload depois de 4s pra pegar resultado
+            setTimeout(loadCaixaEntrada, 4000);
+        }
+
+        function editarAntesIA(msgId) {
+            const m = findMensagem(msgId);
+            if (!m || !m.ai_payload) { openVirarTarefa(msgId); return; }
+            const action = m.ai_proposed_action;
+            const p = m.ai_payload;
+            if (action === 'criar_tarefa') {
+                // Reaproveita openVirarTarefa mas com payload da IA pré-preenchido
+                openVirarTarefaPreenchido(msgId, p);
+            } else if (action === 'criar_nota_em_lead') {
+                openCriarNotaPreenchido(msgId, p);
+            } else if (action === 'anexar_a_lead') {
+                openAnexarLeadPreenchido(msgId, p);
+            } else {
+                alert('Esta sugestão não tem campos editáveis. Aprove ou rejeite direto.');
+            }
+        }
+
+        function openVirarTarefaPreenchido(msgId, p) {
+            const m = findMensagem(msgId); if (!m) return;
+            const today = new Date().toISOString().slice(0, 10);
+            const el = document.getElementById('modal-content');
+            el.classList.remove('xl'); el.classList.add('wide');
+            const tipoOpts = [['outro','Outro'],['ligacao','Ligação'],['email','Email'],['reuniao','Reunião'],['visita','Visita'],['demo','Demo'],['proposta','Proposta']]
+                .map(([v, l]) => `<option value="${v}" ${p.tipo === v ? 'selected' : ''}>${l}</option>`).join('');
+            const prioOpts = [['alta','Alta'],['media','Média'],['baixa','Baixa']]
+                .map(([v, l]) => `<option value="${v}" ${p.prioridade === v ? 'selected' : ''}>${l}</option>`).join('');
+            const respOpts = ['Joao', 'Guilherme', 'Marcos'].map(r => `<option value="${r}" ${p.responsavel === r ? 'selected' : ''}>${r === 'Joao' ? 'João' : r}</option>`).join('');
+            const leadOpts = leadsCache.map(l => `<option value="${l.id}" ${p.lead_id === l.id ? 'selected' : ''}>${escapeHTML(l.nome)}</option>`).join('');
+            el.innerHTML = `<h3>Editar sugestão da IA antes de criar tarefa</h3>
+                <p style="font-size:12px;color:var(--text2);margin-bottom:14px"><i class="ri-sparkling-2-line" style="color:var(--primary)"></i> ${escapeHTML(m.ai_reasoning || '')}</p>
+                <form onsubmit="submitEditarAntesIA(event,'${msgId}','criar_tarefa')">
+                    <div class="form-group"><label>Título</label><input name="titulo" required value="${escapeHTML(p.titulo || '')}"></div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Tipo</label><select name="tipo">${tipoOpts}</select></div>
+                        <div class="form-group"><label>Prioridade</label><select name="prioridade">${prioOpts}</select></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Data</label><input name="data_vencimento" type="date" required value="${escapeHTML(p.data_vencimento || today)}"></div>
+                        <div class="form-group"><label>Responsável</label><select name="responsavel" required>${respOpts}</select></div>
+                    </div>
+                    <div class="form-group"><label>Lead</label><select name="lead_id"><option value="">— Nenhum —</option>${leadOpts}</select></div>
+                    <div class="form-group"><label>Descrição</label><textarea name="descricao" rows="3">${escapeHTML(p.descricao || m.text || '')}</textarea></div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-ghost" onclick="openMensagemDetail('${msgId}')">Voltar</button>
+                        <button type="submit" class="btn btn-primary">Criar tarefa</button>
+                    </div>
+                </form>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function openCriarNotaPreenchido(msgId, p) {
+            const m = findMensagem(msgId); if (!m) return;
+            const el = document.getElementById('modal-content');
+            el.classList.remove('xl'); el.classList.add('wide');
+            const leadOpts = leadsCache.map(l => `<option value="${l.id}" ${p.lead_id === l.id ? 'selected' : ''}>${escapeHTML(l.nome)}</option>`).join('');
+            el.innerHTML = `<h3>Editar nota antes de criar</h3>
+                <p style="font-size:12px;color:var(--text2);margin-bottom:14px"><i class="ri-sparkling-2-line" style="color:var(--primary)"></i> ${escapeHTML(m.ai_reasoning || '')}</p>
+                <form onsubmit="submitEditarAntesIA(event,'${msgId}','criar_nota_em_lead')">
+                    <div class="form-group"><label>Lead</label><select name="lead_id" required><option value="">— selecione —</option>${leadOpts}</select></div>
+                    <div class="form-group"><label>Anotação</label><textarea name="anotacao" rows="4" required>${escapeHTML(p.anotacao || m.text || '')}</textarea></div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-ghost" onclick="openMensagemDetail('${msgId}')">Voltar</button>
+                        <button type="submit" class="btn btn-primary">Criar nota</button>
+                    </div>
+                </form>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function openAnexarLeadPreenchido(msgId, p) {
+            const m = findMensagem(msgId); if (!m) return;
+            const el = document.getElementById('modal-content');
+            el.classList.remove('xl'); el.classList.add('wide');
+            const leadOpts = leadsCache.map(l => `<option value="${l.id}" ${p.lead_id === l.id ? 'selected' : ''}>${escapeHTML(l.nome)}</option>`).join('');
+            el.innerHTML = `<h3>Anexar a lead (sugerido pela IA)</h3>
+                <p style="font-size:12px;color:var(--text2);margin-bottom:14px"><i class="ri-sparkling-2-line" style="color:var(--primary)"></i> ${escapeHTML(m.ai_reasoning || '')}</p>
+                <form onsubmit="submitEditarAntesIA(event,'${msgId}','anexar_a_lead')">
+                    <div class="form-group"><label>Lead</label><select name="lead_id" required><option value="">— selecione —</option>${leadOpts}</select></div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-ghost" onclick="openMensagemDetail('${msgId}')">Voltar</button>
+                        <button type="submit" class="btn btn-primary">Anexar</button>
+                    </div>
+                </form>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        async function submitEditarAntesIA(e, msgId, action) {
+            e.preventDefault();
+            const fd = new FormData(e.target); const o = {};
+            fd.forEach((v, k) => { if (v) o[k] = v; });
+            if (action === 'criar_tarefa') {
+                const tarefa = await api('/api/tarefas', { method: 'POST', body: o });
+                if (tarefa.error || !tarefa.id) { alert('Erro: ' + (tarefa.error || 'sem id')); return; }
+                await api('/api/mensagens-socios/' + msgId, { method: 'PATCH', body: { status: 'triado', tarefa_id: tarefa.id, lead_id: o.lead_id || null } });
+            } else if (action === 'criar_nota_em_lead') {
+                const m = findMensagem(msgId);
+                const sender = (m && (m.sender_name || m.sender_username)) || 'sócio';
+                const r = await api('/api/historico', { method: 'POST', body: { lead_id: o.lead_id, tipo: 'anotacao', descricao: `[Telegram, ${sender}] ${o.anotacao}`, responsavel: 'sistema' } });
+                if (r.error) { alert('Erro: ' + r.error); return; }
+                await api('/api/mensagens-socios/' + msgId, { method: 'PATCH', body: { status: 'triado', lead_id: o.lead_id } });
+            } else if (action === 'anexar_a_lead') {
+                await api('/api/mensagens-socios/' + msgId, { method: 'PATCH', body: { status: 'triado', lead_id: o.lead_id } });
+            }
+            closeModal();
+            loadCaixaEntrada();
         }
 
         function openAnexarLead(msgId) {
