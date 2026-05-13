@@ -790,6 +790,39 @@
         .raw-debug { font-size: 11px; color: var(--text2); margin-top: 8px }
         .raw-debug pre { background: #0a0a0f; border: 1px solid var(--border); border-radius: 6px; padding: 8px; overflow-x: auto; max-height: 200px; margin-top: 4px; font-family: 'SF Mono', Monaco, monospace }
 
+        /* LEAD DETAIL 360 */
+        .modal.xl { max-width: 1100px }
+        .ld-header { padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 16px }
+        .ld-header h2 { font-size: 22px; font-weight: 700; margin-bottom: 4px }
+        .ld-header .sub { font-size: 12px; color: var(--text2); margin-bottom: 12px }
+        .ld-header .row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center }
+        .ld-header .row .field { display: flex; flex-direction: column; gap: 2px }
+        .ld-header .row .field-label { font-size: 10px; text-transform: uppercase; color: var(--text2); letter-spacing: .8px }
+        .ld-header .row .field-value { font-size: 13px; font-weight: 500 }
+        .ld-actions { position: absolute; right: 28px; top: 28px; display: flex; gap: 6px }
+        .lead-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; overflow-x: auto; scrollbar-width: thin }
+        .lead-tab { padding: 10px 14px; background: transparent; border: 0; color: var(--text2); cursor: pointer; font-size: 13px; font-family: inherit; border-bottom: 2px solid transparent; transition: .15s; white-space: nowrap; display: flex; align-items: center; gap: 6px }
+        .lead-tab:hover { color: var(--text) }
+        .lead-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600 }
+        .lead-tab .badge-mini { background: var(--surface2); color: var(--text2); font-size: 10px; padding: 1px 6px; border-radius: 999px; min-width: 16px; text-align: center }
+        .lead-tab.active .badge-mini { background: var(--primary-glow); color: var(--primary) }
+        .lead-tab-content { min-height: 200px }
+        .lead-tab-toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px }
+        .ld-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; cursor: pointer; transition: .15s }
+        .ld-card:hover { border-color: var(--border2) }
+        .ld-card-title { font-size: 14px; font-weight: 500; margin-bottom: 4px }
+        .ld-card-meta { font-size: 12px; color: var(--text2); display: flex; gap: 10px; flex-wrap: wrap; align-items: center }
+        .timeline { position: relative; padding-left: 26px }
+        .timeline::before { content: ''; position: absolute; left: 9px; top: 0; bottom: 0; width: 2px; background: var(--border) }
+        .timeline-item { position: relative; padding-bottom: 16px }
+        .timeline-item::before { content: ''; position: absolute; left: -22px; top: 4px; width: 12px; height: 12px; border-radius: 50%; background: var(--surface2); border: 2px solid var(--primary) }
+        .timeline-item .head { font-size: 12px; display: flex; gap: 8px; align-items: center; margin-bottom: 4px }
+        .timeline-item .head .tipo { padding: 2px 8px; border-radius: 999px; background: var(--primary-glow); color: var(--primary); font-size: 10px; font-weight: 600; text-transform: uppercase }
+        .timeline-item .head .when { color: var(--text2) }
+        .timeline-item .body { font-size: 13px; color: var(--text); white-space: pre-wrap }
+        .timeline-item .resp { font-size: 11px; color: var(--text2); margin-top: 2px }
+        .tab-empty { text-align: center; padding: 30px; color: var(--text2); font-size: 13px }
+
         @media(max-width:768px) {
             .sidebar {
                 display: none
@@ -2202,6 +2235,7 @@
                 leadsCache = await api('/api/leads');
             }
             const el = document.getElementById('modal-content');
+            el.classList.remove('wide', 'xl');
             if (type === 'lead') el.innerHTML = modalLead();
             else if (type === 'tarefa') el.innerHTML = modalTarefa();
             else if (type === 'contrato') el.innerHTML = modalContrato();
@@ -2214,7 +2248,7 @@
         function closeModal() {
             document.getElementById('modal-overlay').classList.remove('active');
             const mc = document.getElementById('modal-content');
-            if (mc) mc.classList.remove('wide');
+            if (mc) mc.classList.remove('wide', 'xl');
         }
 
         function vertOptions() { return verticaisCache.map(v => `<option value="${v.id}">${v.icone} ${v.nome}</option>`).join(''); }
@@ -2235,31 +2269,353 @@
     <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">${isEdit ? 'Atualizar' : 'Salvar'}</button></div></form>`;
         }
 
-        function openLeadDetail(id) {
+        // === LEAD DETAIL 360 ===
+        let leadDetailCurrent = null;
+
+        async function openLeadDetail(id) {
             const l = leadsCache.find(x => x.id === id);
             if (!l) return;
+            leadDetailCurrent = l;
             const el = document.getElementById('modal-content');
+            el.classList.add('wide', 'xl');
+            const vert = l.verticais ? `${l.verticais.icone || ''} ${l.verticais.nome}` : '—';
+            const local = [l.cidade, l.estado].filter(Boolean).join('/') || '—';
             const hasDeployUrl = !!l.deploy_url;
-            el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:20px">
-                <div><h3 style="margin-bottom:4px">${l.nome}</h3><span style="font-size:12px;color:var(--text2)">${l.verticais ? l.verticais.icone + ' ' + l.verticais.nome : '—'} • ${l.cidade || ''}/${l.estado || ''}</span></div>
-                <div class="actions"><button class="btn btn-sm btn-primary" onclick="closeModal();openEditLead('${l.id}')"><i class="ri-edit-line"></i> Editar</button></div>
-            </div>
-            <div class="lead-detail">
-                <div class="field"><div class="field-label">Status</div><div class="field-value">${statusBadge(l.status)}</div></div>
-                <div class="field"><div class="field-label">Temperatura</div><div class="field-value">${tempBadge(l.temperatura)}</div></div>
-                <div class="field"><div class="field-label">Celular</div><div class="field-value">${fmtPhone(l.celular)}</div></div>
-                <div class="field"><div class="field-label">Email</div><div class="field-value">${l.email || '—'}</div></div>
+            el.innerHTML = `<div style="position:relative">
+                <div class="ld-actions">
+                    <button class="btn btn-sm btn-primary" onclick="openEditLead('${l.id}')"><i class="ri-edit-line"></i> Editar</button>
+                    <button class="btn btn-sm btn-ghost" onclick="closeModal()" title="Fechar"><i class="ri-close-line"></i></button>
+                </div>
+                <div class="ld-header">
+                    <h2>${escapeHTML(l.nome || '—')}</h2>
+                    <div class="sub">${escapeHTML(vert)} · ${escapeHTML(local)}</div>
+                    <div class="row">
+                        <div class="field"><div class="field-label">Status</div><div class="field-value">${statusBadge(l.status)}</div></div>
+                        <div class="field"><div class="field-label">Temperatura</div><div class="field-value">${tempBadge(l.temperatura)}</div></div>
+                        <div class="field"><div class="field-label">Responsável</div><div class="field-value">${escapeHTML(l.responsavel || '—')}</div></div>
+                        <div class="field"><div class="field-label">Valor Mensal</div><div class="field-value" style="color:var(--green)">${fmt(l.valor_mensal)}</div></div>
+                        <div class="field"><div class="field-label">Valor Potencial</div><div class="field-value">${fmt(l.valor_potencial)}</div></div>
+                        <div class="field"><div class="field-label">Próximo passo</div><div class="field-value">${escapeHTML(l.proximo_passo || '—')}</div></div>
+                    </div>
+                </div>
+                <div class="lead-tabs" id="ld-tabs">
+                    <button class="lead-tab active" data-tab="overview" onclick="switchLeadTab('overview')"><i class="ri-user-line"></i> Visão Geral</button>
+                    <button class="lead-tab" data-tab="tarefas" onclick="switchLeadTab('tarefas')"><i class="ri-checkbox-circle-line"></i> Tarefas <span class="badge-mini" id="ld-cnt-tarefas">—</span></button>
+                    <button class="lead-tab" data-tab="historico" onclick="switchLeadTab('historico')"><i class="ri-history-line"></i> Histórico <span class="badge-mini" id="ld-cnt-historico">—</span></button>
+                    <button class="lead-tab" data-tab="contatos" onclick="switchLeadTab('contatos')"><i class="ri-contacts-line"></i> Contatos <span class="badge-mini" id="ld-cnt-contatos">—</span></button>
+                    <button class="lead-tab" data-tab="contratos" onclick="switchLeadTab('contratos')"><i class="ri-file-shield-2-line"></i> Contratos <span class="badge-mini" id="ld-cnt-contratos">—</span></button>
+                    <button class="lead-tab" data-tab="documentos" onclick="switchLeadTab('documentos')"><i class="ri-folder-2-line"></i> Documentos <span class="badge-mini" id="ld-cnt-documentos">—</span></button>
+                    <button class="lead-tab" data-tab="mensagens" onclick="switchLeadTab('mensagens')"><i class="ri-message-3-line"></i> Mensagens <span class="badge-mini" id="ld-cnt-mensagens">—</span></button>
+                </div>
+                <div class="lead-tab-content" id="ld-content"></div>
+            </div>`;
+            document.getElementById('modal-overlay').classList.add('active');
+            switchLeadTab('overview');
+            // Pré-carrega contadores em background
+            refreshLeadCounters(l.id);
+        }
+
+        async function refreshLeadCounters(leadId) {
+            const setCnt = (id, n) => { const e = document.getElementById(id); if (e) e.textContent = n; };
+            try {
+                const [tarefas, historico, contatos, contratos, documentos, mensagens] = await Promise.all([
+                    api('/api/tarefas'),
+                    api('/api/historico/' + leadId),
+                    api('/api/contatos/' + leadId),
+                    api('/api/contratos'),
+                    api('/api/documentos'),
+                    api('/api/mensagens-socios')
+                ]);
+                setCnt('ld-cnt-tarefas', (Array.isArray(tarefas) ? tarefas : []).filter(t => t.lead_id === leadId).length);
+                setCnt('ld-cnt-historico', Array.isArray(historico) ? historico.length : 0);
+                setCnt('ld-cnt-contatos', Array.isArray(contatos) ? contatos.length : 0);
+                setCnt('ld-cnt-contratos', (Array.isArray(contratos) ? contratos : []).filter(c => c.lead_id === leadId).length);
+                setCnt('ld-cnt-documentos', (Array.isArray(documentos) ? documentos : []).filter(d => d.lead_id === leadId).length);
+                setCnt('ld-cnt-mensagens', (Array.isArray(mensagens) ? mensagens : []).filter(m => m.lead_id === leadId).length);
+            } catch (e) { /* não bloqueia UI */ }
+        }
+
+        function switchLeadTab(tab) {
+            if (!leadDetailCurrent) return;
+            document.querySelectorAll('#ld-tabs .lead-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+            const content = document.getElementById('ld-content');
+            content.innerHTML = '<div class="tab-empty"><i class="ri-loader-4-line"></i> Carregando…</div>';
+            const leadId = leadDetailCurrent.id;
+            if (tab === 'overview') return renderLeadOverview(leadDetailCurrent);
+            if (tab === 'tarefas') return loadLeadTabTarefas(leadId);
+            if (tab === 'historico') return loadLeadTabHistorico(leadId);
+            if (tab === 'contatos') return loadLeadTabContatos(leadId);
+            if (tab === 'contratos') return loadLeadTabContratos(leadId);
+            if (tab === 'documentos') return loadLeadTabDocumentos(leadId);
+            if (tab === 'mensagens') return loadLeadTabMensagens(leadId);
+        }
+
+        function renderLeadOverview(l) {
+            const hasDeployUrl = !!l.deploy_url;
+            const content = document.getElementById('ld-content');
+            content.innerHTML = `<div class="lead-detail">
+                <div class="field"><div class="field-label">Celular</div><div class="field-value">${fmtPhone(l.celular || l.telefone)}</div></div>
+                <div class="field"><div class="field-label">Email</div><div class="field-value">${escapeHTML(l.email || '—')}</div></div>
+                <div class="field"><div class="field-label">Website</div><div class="field-value">${l.website ? '<a href="' + escapeHTML(l.website) + '" target="_blank" style="color:var(--primary)">' + escapeHTML(l.website) + '</a>' : '—'}</div></div>
+                <div class="field"><div class="field-label">Instagram</div><div class="field-value">${escapeHTML(l.instagram || '—')}</div></div>
+                <div class="field"><div class="field-label">Valor Setup</div><div class="field-value">${fmt(l.valor_setup)}</div></div>
                 <div class="field"><div class="field-label">Valor Mensal</div><div class="field-value" style="color:var(--green)">${fmt(l.valor_mensal)}</div></div>
-                <div class="field"><div class="field-label">Responsável</div><div class="field-value">${l.responsavel || '—'}</div></div>
-                <div class="field"><div class="field-label">Deploy URL</div><div class="field-value">${l.deploy_url ? '<a href="' + l.deploy_url + '" target="_blank" style="color:var(--primary)">' + l.deploy_url + '</a>' : '—'}</div></div>
+                <div class="field"><div class="field-label">Valor Fechado</div><div class="field-value">${fmt(l.valor_fechado)}</div></div>
+                <div class="field"><div class="field-label">Prioridade</div><div class="field-value">${escapeHTML(l.prioridade || '—')}</div></div>
+                <div class="field"><div class="field-label">Próximo Contato</div><div class="field-value">${fmtDate(l.proximo_contato)}</div></div>
+                <div class="field"><div class="field-label">Origem</div><div class="field-value">${escapeHTML(l.origem || '—')}</div></div>
+                <div class="field"><div class="field-label">Deploy URL</div><div class="field-value">${l.deploy_url ? '<a href="' + escapeHTML(l.deploy_url) + '" target="_blank" style="color:var(--primary)">' + escapeHTML(l.deploy_url) + '</a>' : '—'}</div></div>
                 <div class="field"><div class="field-label">Criado em</div><div class="field-value">${fmtDate(l.created_at)}</div></div>
-                ${l.notas ? '<div class="field full"><div class="field-label">Notas</div><div class="field-value">' + l.notas + '</div></div>' : ''}
+                ${l.notas ? '<div class="field full"><div class="field-label">Notas</div><div class="field-value" style="white-space:pre-wrap">' + escapeHTML(l.notas) + '</div></div>' : ''}
+                ${l.motivo_perda ? '<div class="field full"><div class="field-label">Motivo da Perda</div><div class="field-value" style="color:var(--red)">' + escapeHTML(l.motivo_perda) + '</div></div>' : ''}
             </div>
             ${hasDeployUrl ? '<div id="metrics-panel" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)"><div style="color:var(--text2);font-size:12px"><i class="ri-loader-4-line"></i> Carregando métricas do deploy...</div></div>' : ''}`;
-            document.getElementById('modal-overlay').classList.add('active');
+            if (hasDeployUrl) loadClientMetrics(l.id);
+        }
 
-            // Load metrics if deploy URL exists
-            if (hasDeployUrl) loadClientMetrics(id);
+        async function loadLeadTabTarefas(leadId) {
+            const all = await api('/api/tarefas');
+            const list = (Array.isArray(all) ? all : []).filter(t => t.lead_id === leadId);
+            tarefasCache = Array.isArray(all) ? all : tarefasCache;
+            document.getElementById('ld-cnt-tarefas').textContent = list.length;
+            const content = document.getElementById('ld-content');
+            const cards = list.map(t => {
+                const overdue = isOverdue(t);
+                const statusLabel = STATUS_LABEL[t.status] || t.status;
+                return `<div class="ld-card ${overdue ? 'overdue' : ''}" onclick="closeModalAndOpenTarefa('${t.id}')">
+                    <div class="ld-card-title">${escapeHTML(t.titulo || '')}</div>
+                    <div class="ld-card-meta">
+                        <span class="pill ${t.prioridade || ''}">${escapeHTML(statusLabel)}</span>
+                        <span>${escapeHTML(t.responsavel || '—')}</span>
+                        <span class="${overdue ? 'overdue-flag' : ''}">📅 ${fmtDate(t.data_vencimento)}${overdue ? ' ⚠️' : ''}</span>
+                    </div>
+                </div>`;
+            }).join('') || '<div class="tab-empty">Nenhuma tarefa vinculada a este lead.</div>';
+            content.innerHTML = `<div class="lead-tab-toolbar">
+                <button class="btn btn-primary btn-sm" onclick="openNovaTarefaPraLead('${leadId}')"><i class="ri-add-line"></i> Nova tarefa</button>
+            </div>${cards}`;
+        }
+
+        async function loadLeadTabHistorico(leadId) {
+            const list = await api('/api/historico/' + leadId);
+            document.getElementById('ld-cnt-historico').textContent = Array.isArray(list) ? list.length : 0;
+            const content = document.getElementById('ld-content');
+            const items = (Array.isArray(list) ? list : []).map(h => `<div class="timeline-item">
+                <div class="head">
+                    <span class="tipo">${escapeHTML(h.tipo || 'ação')}</span>
+                    <span class="when">${fmtDateTime(h.created_at)}</span>
+                </div>
+                <div class="body">${escapeHTML(h.descricao || '—')}</div>
+                ${h.resultado ? `<div class="resp" style="color:var(--green);margin-top:4px">Resultado: ${escapeHTML(h.resultado)}</div>` : ''}
+                <div class="resp">Por ${escapeHTML(h.responsavel || '—')}${h.proximo_contato ? ' · próximo: ' + fmtDate(h.proximo_contato) : ''}</div>
+            </div>`).join('') || '<div class="tab-empty">Nenhuma ação registrada.</div>';
+            content.innerHTML = `<div class="lead-tab-toolbar">
+                <button class="btn btn-primary btn-sm" onclick="openNovaAcaoPraLead('${leadId}')"><i class="ri-add-line"></i> Registrar ação</button>
+            </div><div class="timeline">${items}</div>`;
+        }
+
+        async function loadLeadTabContatos(leadId) {
+            const list = await api('/api/contatos/' + leadId);
+            document.getElementById('ld-cnt-contatos').textContent = Array.isArray(list) ? list.length : 0;
+            const content = document.getElementById('ld-content');
+            const cards = (Array.isArray(list) ? list : []).map(c => {
+                const flags = [];
+                if (c.decisor) flags.push('<span class="pill alta">🎯 Decisor</span>');
+                if (c.influenciador) flags.push('<span class="pill media">💡 Influenciador</span>');
+                return `<div class="ld-card">
+                    <div class="ld-card-title">${escapeHTML(c.nome || '—')} ${flags.join(' ')}</div>
+                    <div class="ld-card-meta">
+                        <span>${escapeHTML(c.cargo || '—')}${c.departamento ? ' · ' + escapeHTML(c.departamento) : ''}</span>
+                        ${c.telefone ? '<span>📞 ' + fmtPhone(c.telefone) + '</span>' : ''}
+                        ${c.email ? '<span>✉️ ' + escapeHTML(c.email) + '</span>' : ''}
+                    </div>
+                </div>`;
+            }).join('') || '<div class="tab-empty">Nenhum contato cadastrado.</div>';
+            content.innerHTML = `<div class="lead-tab-toolbar">
+                <button class="btn btn-primary btn-sm" onclick="openNovoContatoPraLead('${leadId}')"><i class="ri-add-line"></i> Novo contato</button>
+            </div>${cards}`;
+        }
+
+        async function loadLeadTabContratos(leadId) {
+            const all = await api('/api/contratos');
+            const list = (Array.isArray(all) ? all : []).filter(c => c.lead_id === leadId);
+            document.getElementById('ld-cnt-contratos').textContent = list.length;
+            const content = document.getElementById('ld-content');
+            const cards = list.map(c => `<div class="ld-card">
+                <div class="ld-card-title">${escapeHTML(c.nome || '—')}</div>
+                <div class="ld-card-meta">
+                    <span>${escapeHTML(c.tipo || '—')}</span>
+                    <span style="color:var(--green)">${fmt(c.valor)}</span>
+                    <span>${fmtDate(c.data_inicio)} → ${fmtDate(c.data_fim)}</span>
+                    <span>${statusBadge(c.status)}</span>
+                </div>
+            </div>`).join('') || '<div class="tab-empty">Nenhum contrato.</div>';
+            content.innerHTML = `<div class="lead-tab-toolbar">
+                <button class="btn btn-primary btn-sm" onclick="closeModal();openModal('contrato')"><i class="ri-add-line"></i> Novo contrato</button>
+            </div>${cards}`;
+        }
+
+        async function loadLeadTabDocumentos(leadId) {
+            const all = await api('/api/documentos');
+            const list = (Array.isArray(all) ? all : []).filter(d => d.lead_id === leadId);
+            document.getElementById('ld-cnt-documentos').textContent = list.length;
+            const content = document.getElementById('ld-content');
+            const cards = list.map(d => `<div class="ld-card" ${d.url ? 'onclick="window.open(\'' + escapeHTML(d.url) + '\',\'_blank\')"' : ''}>
+                <div class="ld-card-title">${escapeHTML(d.titulo || '—')} ${d.url ? '<i class="ri-external-link-line" style="color:var(--primary);font-size:12px"></i>' : ''}</div>
+                <div class="ld-card-meta">
+                    <span class="pill">${escapeHTML(d.tipo || '—')}</span>
+                    <span>${fmtDate(d.created_at)}</span>
+                </div>
+            </div>`).join('') || '<div class="tab-empty">Nenhum documento.</div>';
+            content.innerHTML = `<div class="lead-tab-toolbar">
+                <button class="btn btn-primary btn-sm" onclick="closeModal();openModal('documento')"><i class="ri-add-line"></i> Novo documento</button>
+            </div>${cards}`;
+        }
+
+        async function loadLeadTabMensagens(leadId) {
+            const all = await api('/api/mensagens-socios');
+            const list = (Array.isArray(all) ? all : []).filter(m => m.lead_id === leadId);
+            document.getElementById('ld-cnt-mensagens').textContent = list.length;
+            const content = document.getElementById('ld-content');
+            const cards = list.map(m => `<div class="ld-card">
+                <div class="ld-card-title"><i class="ri-telegram-2-line" style="color:#2aabee"></i> ${escapeHTML(m.sender_name || 'Anônimo')} <span style="color:var(--text2);font-size:11px;font-weight:400">${fmtRelTime(m.created_at)}</span></div>
+                <div style="font-size:13px;margin-top:6px;white-space:pre-wrap;color:var(--text)">${escapeHTML(m.text || '(sem texto)')}</div>
+                ${m.tarefa_id ? `<div class="ld-card-meta" style="margin-top:6px"><a style="color:var(--primary);cursor:pointer" onclick="closeModalAndOpenTarefa('${m.tarefa_id}')">→ Ver tarefa criada</a></div>` : ''}
+            </div>`).join('') || '<div class="tab-empty">Nenhuma mensagem vinculada a este lead.</div>';
+            content.innerHTML = cards;
+        }
+
+        async function closeModalAndOpenTarefa(tarefaId) {
+            closeModal();
+            if (!tarefasCache.length) await loadTarefas();
+            openTarefaDetail(tarefaId);
+        }
+
+        function openNovaTarefaPraLead(leadId) {
+            const today = new Date().toISOString().slice(0, 10);
+            const lead = leadsCache.find(x => x.id === leadId);
+            const nomeLead = lead ? escapeHTML(lead.nome) : '';
+            const el = document.getElementById('modal-content');
+            el.classList.remove('xl');
+            el.innerHTML = `<h3>Nova tarefa para ${nomeLead}</h3>
+                <form onsubmit="submitNovaTarefaPraLead(event,'${leadId}')">
+                    <div class="form-group"><label>Título</label><input name="titulo" required></div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Tipo</label><select name="tipo"><option value="outro">Outro</option><option value="ligacao">Ligação</option><option value="email">Email</option><option value="reuniao">Reunião</option><option value="visita">Visita</option><option value="demo">Demo</option><option value="proposta">Proposta</option></select></div>
+                        <div class="form-group"><label>Prioridade</label><select name="prioridade"><option value="media">Média</option><option value="alta">Alta</option><option value="baixa">Baixa</option></select></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Data</label><input name="data_vencimento" type="date" required value="${today}"></div>
+                        <div class="form-group"><label>Responsável</label><select name="responsavel" required><option value="Joao">João</option><option value="Guilherme">Guilherme</option><option value="Marcos">Marcos</option></select></div>
+                    </div>
+                    <div class="form-group"><label>Descrição</label><textarea name="descricao" rows="3"></textarea></div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-ghost" onclick="openLeadDetail('${leadId}')">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Criar tarefa</button>
+                    </div>
+                </form>`;
+        }
+
+        async function submitNovaTarefaPraLead(e, leadId) {
+            e.preventDefault();
+            const fd = new FormData(e.target); const o = { lead_id: leadId };
+            fd.forEach((v, k) => { if (v) o[k] = v; });
+            const r = await api('/api/tarefas', { method: 'POST', body: o });
+            if (r.error) { alert('Erro: ' + r.error); return; }
+            await openLeadDetail(leadId);
+            switchLeadTab('tarefas');
+        }
+
+        function openNovaAcaoPraLead(leadId) {
+            const lead = leadsCache.find(x => x.id === leadId);
+            const nomeLead = lead ? escapeHTML(lead.nome) : '';
+            const el = document.getElementById('modal-content');
+            el.classList.remove('xl');
+            el.innerHTML = `<h3>Registrar ação em ${nomeLead}</h3>
+                <form onsubmit="submitNovaAcaoPraLead(event,'${leadId}')">
+                    <div class="form-row">
+                        <div class="form-group"><label>Tipo</label><select name="tipo" required>
+                            <option value="ligacao">📞 Ligação</option>
+                            <option value="email_enviado">✉️ Email enviado</option>
+                            <option value="email_recebido">📥 Email recebido</option>
+                            <option value="whatsapp">💬 WhatsApp</option>
+                            <option value="reuniao_virtual">💻 Reunião virtual</option>
+                            <option value="reuniao_presencial">🤝 Reunião presencial</option>
+                            <option value="visita">🚗 Visita</option>
+                            <option value="demo">🖥️ Demo</option>
+                            <option value="proposta_enviada">📄 Proposta enviada</option>
+                            <option value="proposta_aceita">✅ Proposta aceita</option>
+                            <option value="proposta_recusada">❌ Proposta recusada</option>
+                            <option value="contrato_assinado">✍️ Contrato assinado</option>
+                            <option value="anotacao">📝 Anotação</option>
+                        </select></div>
+                        <div class="form-group"><label>Responsável</label><select name="responsavel" required><option value="Joao">João</option><option value="Guilherme">Guilherme</option><option value="Marcos">Marcos</option></select></div>
+                    </div>
+                    <div class="form-group"><label>Descrição</label><textarea name="descricao" rows="3" required></textarea></div>
+                    <div class="form-group"><label>Resultado / Próxima ação</label><input name="resultado" placeholder="Ex: marcou demo pra terça"></div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Duração (min)</label><input name="duracao_minutos" type="number" min="1"></div>
+                        <div class="form-group"><label>Próximo contato</label><input name="proximo_contato" type="date"></div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-ghost" onclick="openLeadDetail('${leadId}')">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Registrar</button>
+                    </div>
+                </form>`;
+        }
+
+        async function submitNovaAcaoPraLead(e, leadId) {
+            e.preventDefault();
+            const fd = new FormData(e.target); const o = { lead_id: leadId };
+            fd.forEach((v, k) => { if (v) o[k] = v; });
+            const r = await api('/api/historico', { method: 'POST', body: o });
+            if (r.error) { alert('Erro: ' + r.error); return; }
+            await openLeadDetail(leadId);
+            switchLeadTab('historico');
+        }
+
+        function openNovoContatoPraLead(leadId) {
+            const lead = leadsCache.find(x => x.id === leadId);
+            const nomeLead = lead ? escapeHTML(lead.nome) : '';
+            const el = document.getElementById('modal-content');
+            el.classList.remove('xl');
+            el.innerHTML = `<h3>Novo contato em ${nomeLead}</h3>
+                <form onsubmit="submitNovoContatoPraLead(event,'${leadId}')">
+                    <div class="form-row">
+                        <div class="form-group"><label>Nome</label><input name="nome" required></div>
+                        <div class="form-group"><label>Cargo</label><input name="cargo" placeholder="Ex: Prefeito, Diretor"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Telefone</label><input name="telefone" placeholder="(00) 00000-0000"></div>
+                        <div class="form-group"><label>Email</label><input name="email" type="email"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Departamento</label><input name="departamento"></div>
+                        <div class="form-group"><label>LinkedIn</label><input name="linkedin" placeholder="https://linkedin.com/in/..."></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="display:flex;align-items:center;gap:8px"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" name="decisor" value="true"> 🎯 Decisor</label></div>
+                        <div class="form-group" style="display:flex;align-items:center;gap:8px"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" name="influenciador" value="true"> 💡 Influenciador</label></div>
+                    </div>
+                    <div class="form-group"><label>Notas</label><textarea name="notas" rows="2"></textarea></div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-ghost" onclick="openLeadDetail('${leadId}')">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Criar contato</button>
+                    </div>
+                </form>`;
+        }
+
+        async function submitNovoContatoPraLead(e, leadId) {
+            e.preventDefault();
+            const fd = new FormData(e.target); const o = { lead_id: leadId };
+            fd.forEach((v, k) => {
+                if (k === 'decisor' || k === 'influenciador') o[k] = true;
+                else if (v) o[k] = v;
+            });
+            const r = await api('/api/contatos', { method: 'POST', body: o });
+            if (r.error) { alert('Erro: ' + r.error); return; }
+            await openLeadDetail(leadId);
+            switchLeadTab('contatos');
         }
 
         async function loadClientMetrics(leadId) {
@@ -2297,6 +2653,7 @@
             const l = leadsCache.find(x => x.id === id);
             if (!l) return;
             const el = document.getElementById('modal-content');
+            el.classList.remove('wide', 'xl');
             el.innerHTML = modalLead(l);
             document.getElementById('modal-overlay').classList.add('active');
             setupPhoneMask();
