@@ -1935,14 +1935,23 @@ def classify_message_with_ai(msg_id):
         max_iter = 6
         final_summary = None
 
+        # Reasoning models (o1, o3, o4-mini, gpt-5-thinking, etc) so aceitam
+        # temperature=1 (default) e demoram mais. Detectamos pelo nome.
+        _m = OPENAI_MODEL.lower()
+        _is_reasoning = _m.startswith("o1") or _m.startswith("o3") or _m.startswith("o4") or "thinking" in _m or "reasoning" in _m
+        _completion_kwargs = {
+            "model": OPENAI_MODEL,
+            "tools": AI_TOOLS,
+            "tool_choice": "required",
+            "timeout": 90 if _is_reasoning else 45
+        }
+        if not _is_reasoning:
+            _completion_kwargs["temperature"] = 0.1
+
         for i in range(max_iter):
             completion = openai_client.chat.completions.create(
-                model=OPENAI_MODEL,
                 messages=messages,
-                tools=AI_TOOLS,
-                tool_choice="required",
-                temperature=0.1,
-                timeout=45
+                **_completion_kwargs
             )
             choice = completion.choices[0]
             resp = choice.message
