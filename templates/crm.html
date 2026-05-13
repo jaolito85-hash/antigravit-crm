@@ -754,6 +754,42 @@
         .inbox-empty { text-align: center; padding: 40px 20px; color: var(--text2); font-size: 13px }
         .badge-count { background: var(--primary); color: #fff; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 999px; margin-left: auto; min-width: 18px; text-align: center; line-height: 1.4 }
 
+        /* TAREFAS V2: 4 colunas por status + filtros */
+        .kanban-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 14px }
+        .kanban-col-header.col-aberta { color: #cbd5e1 }
+        .kanban-col-header.col-em_andamento { color: var(--yellow) }
+        .kanban-col-header.col-aguardando { color: var(--blue) }
+        .kanban-col-header.col-concluida { color: var(--green) }
+        .kanban-card .pill { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); margin-right: 4px }
+        .kanban-card .pill.alta { color: var(--red); border-color: rgba(239,68,68,.3) }
+        .kanban-card .pill.media { color: var(--yellow); border-color: rgba(245,158,11,.3) }
+        .kanban-card .pill.baixa { color: var(--text2) }
+        .kanban-card.overdue { border-color: rgba(239,68,68,.4) }
+        .kanban-card .overdue-flag { color: var(--red); font-weight: 600 }
+        .task-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px }
+        .task-filters select, .task-filters input { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 8px; font-size: 12px; font-family: inherit }
+        .task-filters input { min-width: 200px }
+
+        /* MODAL WIDE (detalhe) */
+        .modal.wide { max-width: 720px }
+        .detail-section { padding: 12px 0; border-top: 1px solid var(--border) }
+        .detail-section:first-of-type { border-top: 0 }
+        .detail-section h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--text2); margin-bottom: 10px; font-weight: 600 }
+        .status-pills { display: flex; gap: 6px; flex-wrap: wrap }
+        .status-pill { padding: 6px 12px; border-radius: 999px; font-size: 12px; cursor: pointer; border: 1px solid var(--border); background: var(--surface2); color: var(--text2); transition: .15s; user-select: none }
+        .status-pill:hover { border-color: var(--border2) }
+        .status-pill.active.aberta { background: rgba(203,213,225,.15); color: #cbd5e1; border-color: rgba(203,213,225,.4) }
+        .status-pill.active.em_andamento { background: rgba(245,158,11,.15); color: var(--yellow); border-color: rgba(245,158,11,.4) }
+        .status-pill.active.aguardando { background: rgba(59,130,246,.15); color: var(--blue); border-color: rgba(59,130,246,.4) }
+        .status-pill.active.concluida { background: rgba(16,185,129,.15); color: var(--green); border-color: rgba(16,185,129,.4) }
+        .status-pill.active.cancelada { background: rgba(239,68,68,.12); color: var(--red); border-color: rgba(239,68,68,.4) }
+        .detail-origin { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 13px }
+        .detail-origin .origin-from { font-size: 11px; color: var(--text2); margin-bottom: 6px; display: flex; align-items: center; gap: 6px }
+        .detail-origin .origin-from i { color: #2aabee }
+        .detail-origin .origin-text { white-space: pre-wrap; word-break: break-word }
+        .raw-debug { font-size: 11px; color: var(--text2); margin-top: 8px }
+        .raw-debug pre { background: #0a0a0f; border: 1px solid var(--border); border-radius: 6px; padding: 8px; overflow-x: auto; max-height: 200px; margin-top: 4px; font-family: 'SF Mono', Monaco, monospace }
+
         @media(max-width:768px) {
             .sidebar {
                 display: none
@@ -768,7 +804,7 @@
                 grid-template-columns: 1fr 1fr
             }
 
-            .kanban {
+            .kanban, .kanban-4 {
                 grid-template-columns: 1fr
             }
 
@@ -900,22 +936,47 @@
             <div class="page-header">
                 <div>
                     <h1>Tarefas</h1>
-                    <p>Kanban de atividades</p>
+                    <p>Clique em uma tarefa para abrir o detalhe e mover de status.</p>
                 </div><button class="btn btn-primary" onclick="openModal('tarefa')"><i class="ri-add-line"></i>Nova
                     Tarefa</button>
             </div>
-            <div class="kanban">
+            <div class="task-filters">
+                <input type="text" id="tarefa-search" placeholder="🔍 Buscar por título ou descrição" oninput="renderTarefas()">
+                <select id="tarefa-resp" onchange="renderTarefas()">
+                    <option value="">Todos responsáveis</option>
+                    <option value="Joao">João</option>
+                    <option value="Guilherme">Guilherme</option>
+                    <option value="Marcos">Marcos</option>
+                </select>
+                <select id="tarefa-prio" onchange="renderTarefas()">
+                    <option value="">Todas prioridades</option>
+                    <option value="alta">Alta</option>
+                    <option value="media">Média</option>
+                    <option value="baixa">Baixa</option>
+                </select>
+                <select id="tarefa-prazo" onchange="renderTarefas()">
+                    <option value="">Qualquer prazo</option>
+                    <option value="overdue">Atrasadas</option>
+                    <option value="today">Hoje</option>
+                    <option value="week">Esta semana</option>
+                </select>
+            </div>
+            <div class="kanban-4">
                 <div class="kanban-col">
-                    <div class="kanban-col-header">📋 A Fazer <span class="count" id="count-todo">0</span></div>
-                    <div class="kanban-cards" id="kanban-todo"></div>
+                    <div class="kanban-col-header col-aberta">📋 A Fazer <span class="count" id="count-aberta">0</span></div>
+                    <div class="kanban-cards" id="kanban-aberta"></div>
                 </div>
                 <div class="kanban-col">
-                    <div class="kanban-col-header">🔄 Em Andamento <span class="count" id="count-doing">0</span></div>
-                    <div class="kanban-cards" id="kanban-doing"></div>
+                    <div class="kanban-col-header col-em_andamento">🔄 Em Andamento <span class="count" id="count-em_andamento">0</span></div>
+                    <div class="kanban-cards" id="kanban-em_andamento"></div>
                 </div>
                 <div class="kanban-col">
-                    <div class="kanban-col-header">✅ Concluído <span class="count" id="count-done">0</span></div>
-                    <div class="kanban-cards" id="kanban-done"></div>
+                    <div class="kanban-col-header col-aguardando">⏳ Aguardando <span class="count" id="count-aguardando">0</span></div>
+                    <div class="kanban-cards" id="kanban-aguardando"></div>
+                </div>
+                <div class="kanban-col">
+                    <div class="kanban-col-header col-concluida">✅ Concluído <span class="count" id="count-concluida">0</span></div>
+                    <div class="kanban-cards" id="kanban-concluida"></div>
                 </div>
             </div>
         </div>
@@ -1144,13 +1205,16 @@
             <div class="page-header">
                 <div>
                     <h1>Caixa de Entrada</h1>
-                    <p>Mensagens capturadas do grupo Telegram dos sócios. Vire em tarefa ou arquive.</p>
+                    <p>Mensagens capturadas do grupo Telegram dos sócios. Clique numa mensagem para ver o detalhe e agir.</p>
                 </div>
             </div>
             <div class="tabs" id="caixa-tabs">
                 <button class="tab active" onclick="setCaixaFilter('inbox',this)">📥 Inbox <span class="count" id="cnt-caixa-inbox">0</span></button>
                 <button class="tab" onclick="setCaixaFilter('triado',this)">✅ Triado <span class="count" id="cnt-caixa-triado">0</span></button>
                 <button class="tab" onclick="setCaixaFilter('arquivado',this)">🗄️ Arquivado <span class="count" id="cnt-caixa-arquivado">0</span></button>
+            </div>
+            <div class="task-filters" style="margin-bottom:14px">
+                <input type="text" id="caixa-search" placeholder="🔍 Buscar por remetente ou texto" oninput="renderCaixa()">
             </div>
             <div id="caixa-list"></div>
         </div>
@@ -1293,26 +1357,188 @@
             renderLeads();
         }
 
+        // === TAREFAS V2 ===
+        let tarefasCache = [];
+        let mensagensSociosByTarefa = {};
+
+        const STATUS_LABEL = { aberta: 'A Fazer', em_andamento: 'Em Andamento', aguardando: 'Aguardando', concluida: 'Concluído', cancelada: 'Cancelada' };
+        const STATUS_ORDER = ['aberta', 'em_andamento', 'aguardando', 'concluida'];
+
         async function loadTarefas() {
-            const tarefas = await api('/api/tarefas');
-            const todo = tarefas.filter(t => !t.concluida && t.tipo !== 'doing');
-            const doing = tarefas.filter(t => !t.concluida && t.tipo === 'doing');
-            const done = tarefas.filter(t => t.concluida);
-            const renderCard = t => `<div class="kanban-card" onclick="completeTarefa('${t.id}',${!t.concluida})">
-        <h4>${t.titulo}</h4>
-        <div class="meta"><span>${t.responsavel || '—'}</span><span>📅 ${fmtDate(t.data_vencimento)}</span></div>
-        ${t.leads ? '<div class="meta" style="margin-top:4px">🏢 ' + t.leads.nome + '</div>' : ''}
-    </div>`;
-            document.getElementById('kanban-todo').innerHTML = todo.map(renderCard).join('') || '<p style="color:#555;font-size:12px;padding:8px">Nenhuma</p>';
-            document.getElementById('kanban-doing').innerHTML = doing.map(renderCard).join('') || '<p style="color:#555;font-size:12px;padding:8px">Nenhuma</p>';
-            document.getElementById('kanban-done').innerHTML = done.map(renderCard).join('') || '<p style="color:#555;font-size:12px;padding:8px">Nenhuma</p>';
-            document.getElementById('count-todo').textContent = todo.length;
-            document.getElementById('count-doing').textContent = doing.length;
-            document.getElementById('count-done').textContent = done.length;
+            const [tarefas, todasMsgs] = await Promise.all([
+                api('/api/tarefas'),
+                api('/api/mensagens-socios')
+            ]);
+            tarefasCache = Array.isArray(tarefas) ? tarefas : [];
+            mensagensSociosByTarefa = {};
+            (Array.isArray(todasMsgs) ? todasMsgs : []).forEach(m => {
+                if (m.tarefa_id) mensagensSociosByTarefa[m.tarefa_id] = m;
+            });
+            renderTarefas();
         }
 
-        async function completeTarefa(id, concluir) {
-            await api('/api/tarefas/' + id, { method: 'PATCH', body: { concluida: concluir } });
+        function getTarefaFilters() {
+            const get = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+            return {
+                search: (get('tarefa-search') || '').toLowerCase().trim(),
+                responsavel: get('tarefa-resp'),
+                prioridade: get('tarefa-prio'),
+                prazo: get('tarefa-prazo')
+            };
+        }
+
+        function isOverdue(t) {
+            if (!t.data_vencimento || t.status === 'concluida' || t.status === 'cancelada') return false;
+            const hoje = new Date(); hoje.setHours(0,0,0,0);
+            return new Date(t.data_vencimento + 'T12:00:00') < hoje;
+        }
+
+        function matchPrazo(t, prazo) {
+            if (!prazo) return true;
+            if (!t.data_vencimento) return false;
+            const hoje = new Date(); hoje.setHours(0,0,0,0);
+            const d = new Date(t.data_vencimento + 'T12:00:00');
+            if (prazo === 'overdue') return d < hoje && t.status !== 'concluida' && t.status !== 'cancelada';
+            if (prazo === 'today') return d.getTime() === hoje.getTime();
+            if (prazo === 'week') {
+                const fim = new Date(hoje); fim.setDate(fim.getDate() + 7);
+                return d >= hoje && d <= fim;
+            }
+            return true;
+        }
+
+        function renderTarefas() {
+            const f = getTarefaFilters();
+            const filtradas = tarefasCache.filter(t => {
+                if (t.status === 'cancelada') return false;
+                if (f.responsavel && t.responsavel !== f.responsavel) return false;
+                if (f.prioridade && t.prioridade !== f.prioridade) return false;
+                if (!matchPrazo(t, f.prazo)) return false;
+                if (f.search) {
+                    const blob = ((t.titulo || '') + ' ' + (t.descricao || '')).toLowerCase();
+                    if (!blob.includes(f.search)) return false;
+                }
+                return true;
+            });
+
+            const renderCard = t => {
+                const overdue = isOverdue(t);
+                const origem = mensagensSociosByTarefa[t.id];
+                const prioPill = t.prioridade ? `<span class="pill ${t.prioridade}">${t.prioridade}</span>` : '';
+                return `<div class="kanban-card ${overdue ? 'overdue' : ''}" onclick="openTarefaDetail('${t.id}')">
+                    <h4>${escapeHTML(t.titulo || '')}</h4>
+                    <div style="margin-bottom:6px">${prioPill}${origem ? '<span class="pill" title="Veio da Caixa de Entrada"><i class="ri-telegram-2-line" style="color:#2aabee"></i> Telegram</span>' : ''}</div>
+                    <div class="meta">
+                        <span>${escapeHTML(t.responsavel || '—')}</span>
+                        <span class="${overdue ? 'overdue-flag' : ''}">📅 ${fmtDate(t.data_vencimento)}${overdue ? ' ⚠️' : ''}</span>
+                    </div>
+                    ${t.leads ? '<div class="meta" style="margin-top:4px">🏢 ' + escapeHTML(t.leads.nome) + '</div>' : ''}
+                </div>`;
+            };
+
+            STATUS_ORDER.forEach(s => {
+                const lista = filtradas.filter(t => t.status === s);
+                const el = document.getElementById('kanban-' + s);
+                const cnt = document.getElementById('count-' + s);
+                if (el) el.innerHTML = lista.map(renderCard).join('') || '<p style="color:#555;font-size:12px;padding:8px">Nenhuma</p>';
+                if (cnt) cnt.textContent = lista.length;
+            });
+        }
+
+        function openTarefaDetail(id) {
+            const t = tarefasCache.find(x => x.id === id);
+            if (!t) return;
+            const origem = mensagensSociosByTarefa[id];
+            const today = new Date().toISOString().slice(0, 10);
+            const dataVal = t.data_vencimento || today;
+            const horaVal = t.hora || '';
+            const respOpts = ['Joao', 'Guilherme', 'Marcos'].map(r => `<option value="${r}" ${t.responsavel === r ? 'selected' : ''}>${r === 'Joao' ? 'João' : r}</option>`).join('');
+            const tipoOpts = [['ligacao','Ligação'],['email','Email'],['reuniao','Reunião'],['visita','Visita'],['demo','Demo'],['proposta','Proposta'],['outro','Outro']]
+                .map(([v, l]) => `<option value="${v}" ${t.tipo === v ? 'selected' : ''}>${l}</option>`).join('');
+            const prioOpts = [['alta','Alta'],['media','Média'],['baixa','Baixa']]
+                .map(([v, l]) => `<option value="${v}" ${t.prioridade === v ? 'selected' : ''}>${l}</option>`).join('');
+            const leadSelected = (t.lead_id || '');
+            const leadOpts = leadsCache.map(l => `<option value="${l.id}" ${leadSelected === l.id ? 'selected' : ''}>${escapeHTML(l.nome || '')}</option>`).join('');
+
+            const allStatuses = ['aberta', 'em_andamento', 'aguardando', 'concluida', 'cancelada'];
+            const pills = allStatuses.map(s => `<div class="status-pill ${t.status === s ? 'active ' + s : ''}" onclick="changeTarefaStatus('${t.id}','${s}')">${STATUS_LABEL[s]}</div>`).join('');
+
+            let origemBlock = '';
+            if (origem) {
+                const senderEsc = escapeHTML(origem.sender_name || origem.sender_username || 'Anônimo');
+                origemBlock = `<div class="detail-section">
+                    <h4>Origem</h4>
+                    <div class="detail-origin">
+                        <div class="origin-from"><i class="ri-telegram-2-line"></i> ${senderEsc} via Telegram — ${fmtRelTime(origem.created_at)}</div>
+                        <div class="origin-text">${escapeHTML(origem.text || '(sem texto)')}</div>
+                    </div>
+                </div>`;
+            }
+
+            const el = document.getElementById('modal-content');
+            el.parentElement.firstElementChild.classList.add('wide');
+            el.classList.add('wide');
+            el.innerHTML = `<h3>${escapeHTML(t.titulo || 'Tarefa')}</h3>
+                <form id="tarefa-detail-form" onsubmit="saveTarefaDetail(event,'${t.id}')">
+                    <div class="detail-section">
+                        <h4>Status</h4>
+                        <div class="status-pills">${pills}</div>
+                    </div>
+                    <div class="detail-section">
+                        <h4>Dados</h4>
+                        <div class="form-group"><label>Título</label><input name="titulo" required value="${escapeHTML(t.titulo || '')}"></div>
+                        <div class="form-row">
+                            <div class="form-group"><label>Tipo</label><select name="tipo">${tipoOpts}</select></div>
+                            <div class="form-group"><label>Prioridade</label><select name="prioridade">${prioOpts}</select></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group"><label>Data</label><input name="data_vencimento" type="date" value="${dataVal}"></div>
+                            <div class="form-group"><label>Hora</label><input name="hora" type="time" value="${horaVal}"></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group"><label>Responsável</label><select name="responsavel" required>${respOpts}</select></div>
+                            <div class="form-group"><label>Lead</label><select name="lead_id"><option value="">— Nenhum —</option>${leadOpts}</select></div>
+                        </div>
+                        <div class="form-group"><label>Descrição</label><textarea name="descricao" rows="3">${escapeHTML(t.descricao || '')}</textarea></div>
+                    </div>
+                    ${origemBlock}
+                    <div class="detail-section" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                        <button type="button" class="btn btn-ghost" style="color:var(--red);border-color:rgba(239,68,68,.3)" onclick="deleteTarefaFromDetail('${t.id}','${escapeHTML(t.titulo || '').replace(/'/g, '&#39;')}')"><i class="ri-delete-bin-line"></i> Excluir</button>
+                        <div style="display:flex;gap:8px">
+                            <button type="button" class="btn btn-ghost" onclick="closeModal()">Fechar</button>
+                            <button type="submit" class="btn btn-primary">Salvar alterações</button>
+                        </div>
+                    </div>
+                </form>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        async function changeTarefaStatus(id, status) {
+            const upd = await api('/api/tarefas/' + id, { method: 'PATCH', body: { status: status } });
+            if (upd.error) { alert('Erro: ' + upd.error); return; }
+            // Atualiza cache local pra o pill atualizar visualmente sem reload completo
+            const t = tarefasCache.find(x => x.id === id);
+            if (t) { t.status = status; t.concluida = (status === 'concluida'); }
+            openTarefaDetail(id);
+            // Reload em background pros contadores
+            loadTarefas();
+        }
+
+        async function saveTarefaDetail(e, id) {
+            e.preventDefault();
+            const fd = new FormData(e.target); const o = {};
+            fd.forEach((v, k) => { o[k] = v || null; });
+            const upd = await api('/api/tarefas/' + id, { method: 'PATCH', body: o });
+            if (upd.error) { alert('Erro ao salvar: ' + upd.error); return; }
+            closeModal();
+            loadTarefas();
+        }
+
+        async function deleteTarefaFromDetail(id, titulo) {
+            if (!confirm(`Excluir tarefa "${titulo}"? Esta ação não pode ser desfeita.`)) return;
+            const r = await api('/api/tarefas/' + id, { method: 'DELETE' });
+            if (r.error) { alert('Erro: ' + r.error); return; }
+            closeModal();
             loadTarefas();
         }
 
@@ -1370,10 +1596,13 @@
         }
 
         function renderCaixa() {
-            const list = caixaCache[caixaFilter] || [];
+            const all = caixaCache[caixaFilter] || [];
+            const searchEl = document.getElementById('caixa-search');
+            const search = searchEl ? searchEl.value.toLowerCase().trim() : '';
+            const list = search ? all.filter(m => ((m.sender_name || '') + ' ' + (m.sender_username || '') + ' ' + (m.text || '')).toLowerCase().includes(search)) : all;
             const el = document.getElementById('caixa-list');
             if (!list.length) {
-                const msg = caixaFilter === 'inbox' ? 'Inbox vazia. Mensagens novas do grupo Telegram chegam aqui.' : `Nenhuma mensagem ${caixaFilter}.`;
+                const msg = search ? 'Nenhuma mensagem bate com a busca.' : (caixaFilter === 'inbox' ? 'Inbox vazia. Mensagens novas do grupo Telegram chegam aqui.' : `Nenhuma mensagem ${caixaFilter}.`);
                 el.innerHTML = `<div class="inbox-empty">${msg}</div>`;
                 return;
             }
@@ -1385,16 +1614,22 @@
                 let footer = '';
                 if (m.status === 'inbox') {
                     footer = `<div class="inbox-actions">
-                        <button class="btn btn-primary" onclick="openVirarTarefa('${m.id}')"><i class="ri-task-line"></i> Virar tarefa</button>
-                        <button class="btn btn-ghost" onclick="arquivarMensagem('${m.id}')"><i class="ri-archive-line"></i> Arquivar</button>
+                        <button class="btn btn-primary" onclick="event.stopPropagation();openVirarTarefa('${m.id}')"><i class="ri-task-line"></i> Virar tarefa</button>
+                        <button class="btn btn-ghost" onclick="event.stopPropagation();openAnexarLead('${m.id}')"><i class="ri-links-line"></i> Anexar a lead</button>
+                        <button class="btn btn-ghost" onclick="event.stopPropagation();openCriarNota('${m.id}')"><i class="ri-sticky-note-line"></i> Criar nota</button>
+                        <button class="btn btn-ghost" onclick="event.stopPropagation();arquivarMensagem('${m.id}')"><i class="ri-archive-line"></i> Arquivar</button>
                     </div>`;
                 } else if (m.status === 'triado') {
                     const por = escapeHTML(m.triado_por || '—');
-                    footer = `<div class="inbox-meta-footer triado"><i class="ri-check-double-line"></i> Triado por ${por} ${m.triado_em ? fmtRelTime(m.triado_em) : ''}</div>`;
+                    const linkTarefa = m.tarefa_id ? `<button class="btn btn-ghost" style="margin-left:8px;padding:4px 10px;font-size:11px" onclick="event.stopPropagation();openTarefaFromMensagem('${m.tarefa_id}')"><i class="ri-external-link-line"></i> Ver tarefa</button>` : '';
+                    footer = `<div class="inbox-meta-footer triado"><i class="ri-check-double-line"></i> Triado por ${por} ${m.triado_em ? fmtRelTime(m.triado_em) : ''}${linkTarefa}</div>`;
                 } else {
-                    footer = `<div class="inbox-meta-footer"><i class="ri-archive-line"></i> Arquivado ${m.triado_em ? fmtRelTime(m.triado_em) : ''}</div>`;
+                    footer = `<div class="inbox-meta-footer">
+                        <i class="ri-archive-line"></i> Arquivado ${m.triado_em ? fmtRelTime(m.triado_em) : ''}
+                        <button class="btn btn-ghost" style="margin-left:8px;padding:4px 10px;font-size:11px" onclick="event.stopPropagation();desarquivarMensagem('${m.id}')"><i class="ri-arrow-go-back-line"></i> Desarquivar</button>
+                    </div>`;
                 }
-                return `<div class="inbox-card">
+                return `<div class="inbox-card" onclick="openMensagemDetail('${m.id}')" style="cursor:pointer">
                     <div class="inbox-card-header">
                         <div class="inbox-from"><i class="ri-telegram-2-line"></i><strong>${sender}</strong><span class="inbox-time">${fmtRelTime(m.created_at)}</span></div>
                     </div>
@@ -1404,6 +1639,152 @@
                 </div>`;
             }).join('');
         }
+
+        function findMensagem(id) {
+            return [...caixaCache.inbox, ...caixaCache.triado, ...caixaCache.arquivado].find(x => x.id === id);
+        }
+
+        function openMensagemDetail(msgId) {
+            const m = findMensagem(msgId);
+            if (!m) return;
+            const sender = escapeHTML(m.sender_name || m.sender_username || 'Anônimo');
+            const username = m.sender_username ? `@${escapeHTML(m.sender_username)}` : '';
+            const att = m.attachment_type ? `<div class="inbox-attachment" style="margin-bottom:10px">${attachmentLabel(m.attachment_type)}${m.attachment_file_id ? ' · <code style="font-size:10px;color:var(--text2)">' + escapeHTML(m.attachment_file_id.slice(0, 24)) + '…</code>' : ''}</div>` : '';
+            const text = m.text ? `<div class="inbox-text" style="margin-bottom:0">${escapeHTML(m.text)}</div>` : '<div class="inbox-text empty">(sem texto)</div>';
+            let acoesBlock = '';
+            if (m.status === 'inbox') {
+                acoesBlock = `<div class="detail-section">
+                    <h4>Ações</h4>
+                    <div class="inbox-actions">
+                        <button class="btn btn-primary" onclick="closeModal();openVirarTarefa('${m.id}')"><i class="ri-task-line"></i> Virar tarefa</button>
+                        <button class="btn btn-ghost" onclick="closeModal();openAnexarLead('${m.id}')"><i class="ri-links-line"></i> Anexar a lead</button>
+                        <button class="btn btn-ghost" onclick="closeModal();openCriarNota('${m.id}')"><i class="ri-sticky-note-line"></i> Criar nota em lead</button>
+                        <button class="btn btn-ghost" onclick="arquivarMensagem('${m.id}');closeModal()"><i class="ri-archive-line"></i> Arquivar</button>
+                    </div>
+                </div>`;
+            } else if (m.status === 'triado') {
+                const tarefaBtn = m.tarefa_id ? `<button class="btn btn-primary" onclick="closeModal();openTarefaFromMensagem('${m.tarefa_id}')"><i class="ri-external-link-line"></i> Ver tarefa criada</button>` : '<span style="color:var(--text2);font-size:12px">Sem tarefa vinculada (provavelmente foi vinculada a um lead).</span>';
+                acoesBlock = `<div class="detail-section">
+                    <h4>Status: Triado por ${escapeHTML(m.triado_por || '—')} (${m.triado_em ? fmtRelTime(m.triado_em) : '—'})</h4>
+                    <div class="inbox-actions">${tarefaBtn}</div>
+                </div>`;
+            } else {
+                acoesBlock = `<div class="detail-section">
+                    <h4>Arquivada ${m.triado_em ? fmtRelTime(m.triado_em) : ''}</h4>
+                    <div class="inbox-actions">
+                        <button class="btn btn-primary" onclick="desarquivarMensagem('${m.id}');closeModal()"><i class="ri-arrow-go-back-line"></i> Desarquivar</button>
+                    </div>
+                </div>`;
+            }
+            const rawPayloadStr = m.raw_payload ? escapeHTML(JSON.stringify(m.raw_payload, null, 2)) : '';
+            const el = document.getElementById('modal-content');
+            el.classList.add('wide');
+            el.innerHTML = `<h3><i class="ri-telegram-2-line" style="color:#2aabee"></i> Mensagem de ${sender}</h3>
+                <div class="detail-section">
+                    <h4>Remetente</h4>
+                    <div style="display:flex;align-items:center;gap:10px;font-size:13px">
+                        <strong>${sender}</strong>
+                        ${username ? `<span style="color:var(--text2)">${username}</span>` : ''}
+                        <span style="color:var(--text2);margin-left:auto">${fmtRelTime(m.created_at)}</span>
+                    </div>
+                </div>
+                <div class="detail-section">
+                    <h4>Conteúdo</h4>
+                    ${att}
+                    ${text}
+                </div>
+                ${acoesBlock}
+                ${rawPayloadStr ? `<details class="raw-debug"><summary>Payload bruto (debug)</summary><pre>${rawPayloadStr}</pre></details>` : ''}
+                <div style="margin-top:14px;display:flex;justify-content:flex-end">
+                    <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>
+                </div>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function openAnexarLead(msgId) {
+            const m = findMensagem(msgId);
+            if (!m) return;
+            const el = document.getElementById('modal-content');
+            el.classList.remove('wide');
+            el.innerHTML = `<h3>Anexar mensagem a lead</h3>
+                <p style="font-size:12px;color:var(--text2);margin-bottom:14px">A mensagem fica triada e referencia o lead, sem criar tarefa.</p>
+                <form onsubmit="submitAnexarLead(event,'${m.id}')">
+                    <div class="form-group"><label>Lead</label><select name="lead_id" required><option value="">— selecione —</option>${leadOptions()}</select></div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Anexar</button>
+                    </div>
+                </form>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        async function submitAnexarLead(e, msgId) {
+            e.preventDefault();
+            const fd = new FormData(e.target);
+            const lead_id = fd.get('lead_id');
+            if (!lead_id) return;
+            const upd = await api('/api/mensagens-socios/' + msgId, { method: 'PATCH', body: { status: 'triado', lead_id } });
+            if (upd.error) { alert('Erro: ' + upd.error); return; }
+            closeModal();
+            loadCaixaEntrada();
+        }
+
+        function openCriarNota(msgId) {
+            const m = findMensagem(msgId);
+            if (!m) return;
+            const el = document.getElementById('modal-content');
+            el.classList.remove('wide');
+            const textoOrig = escapeHTML(m.text || (m.attachment_type ? attachmentLabel(m.attachment_type) : ''));
+            el.innerHTML = `<h3>Criar nota em lead</h3>
+                <p style="font-size:12px;color:var(--text2);margin-bottom:14px">Registra a mensagem como anotação no histórico do lead escolhido.</p>
+                <form onsubmit="submitCriarNota(event,'${m.id}')">
+                    <div class="form-group"><label>Lead</label><select name="lead_id" required><option value="">— selecione —</option>${leadOptions()}</select></div>
+                    <div class="form-group"><label>Anotação</label><textarea name="descricao" rows="4" required>${textoOrig}</textarea></div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Criar nota</button>
+                    </div>
+                </form>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        async function submitCriarNota(e, msgId) {
+            e.preventDefault();
+            const fd = new FormData(e.target);
+            const lead_id = fd.get('lead_id');
+            const descricao = fd.get('descricao');
+            if (!lead_id || !descricao) return;
+            const m = findMensagem(msgId);
+            const sender = m?.sender_name || m?.sender_username || 'sócio';
+            const nota = await api('/api/historico', { method: 'POST', body: {
+                lead_id,
+                tipo: 'anotacao',
+                descricao: `[Telegram, ${sender}] ${descricao}`,
+                responsavel: 'sistema'
+            }});
+            if (nota.error) { alert('Erro ao criar nota: ' + nota.error); return; }
+            await api('/api/mensagens-socios/' + msgId, { method: 'PATCH', body: { status: 'triado', lead_id } });
+            closeModal();
+            loadCaixaEntrada();
+        }
+
+        async function desarquivarMensagem(msgId) {
+            const upd = await api('/api/mensagens-socios/' + msgId, { method: 'PATCH', body: { status: 'inbox' } });
+            if (upd.error) { alert('Erro: ' + upd.error); return; }
+            loadCaixaEntrada();
+        }
+
+        async function openTarefaFromMensagem(tarefaId) {
+            // Carrega tarefas se ainda não tiver
+            if (!tarefasCache.length) await loadTarefas();
+            openTarefaDetail(tarefaId);
+        }
+
+        // Auto-refresh da caixa quando a aba está ativa (30s)
+        setInterval(() => {
+            const view = document.getElementById('view-caixa');
+            if (view && view.classList.contains('active')) loadCaixaEntrada();
+        }, 30000);
 
         function openVirarTarefa(msgId) {
             const m = [...caixaCache.inbox, ...caixaCache.triado, ...caixaCache.arquivado].find(x => x.id === msgId);
@@ -1830,7 +2211,11 @@
             document.getElementById('modal-overlay').classList.add('active');
             if (type === 'lead') setupPhoneMask();
         }
-        function closeModal() { document.getElementById('modal-overlay').classList.remove('active'); }
+        function closeModal() {
+            document.getElementById('modal-overlay').classList.remove('active');
+            const mc = document.getElementById('modal-content');
+            if (mc) mc.classList.remove('wide');
+        }
 
         function vertOptions() { return verticaisCache.map(v => `<option value="${v.id}">${v.icone} ${v.nome}</option>`).join(''); }
         function leadOptions() { return leadsCache.map(l => `<option value="${l.id}">${l.nome}</option>`).join(''); }
