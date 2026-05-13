@@ -1862,10 +1862,21 @@ def _execute_tool(tool_name, args, msg_row, msg_id, user_label="Agente IA"):
                 return {"ok": False, "error": "pergunta vazia"}
             # Thread root = a primeira mensagem do socio. Pode ser a atual ou uma anterior se for continuacao.
             thread_root = (msg_row or {}).get("replied_to_telegram_message_id") or (msg_row or {}).get("telegram_message_id")
+            chat_id_local = (msg_row or {}).get("telegram_chat_id")
             reply_to = (msg_row or {}).get("telegram_message_id")
             bot_msg_id = send_telegram_message(f"❓ {pergunta}", reply_to_message_id=reply_to)
             if bot_msg_id:
                 register_bot_message_in_db(bot_msg_id, pergunta, thread_root)
+                # Marca a mensagem-raiz da thread como aguardando resposta — webhook
+                # vai usar isso pra detectar a proxima mensagem do socio como continuacao.
+                if chat_id_local and thread_root:
+                    try:
+                        supabase.table("mensagens_socios").update({"awaiting_user_response": True}) \
+                            .eq("telegram_chat_id", chat_id_local) \
+                            .eq("telegram_message_id", thread_root) \
+                            .execute()
+                    except Exception as e:
+                        print(f"⚠️ erro marcando awaiting_user_response: {e}")
                 try:
                     audit("update", "mensagens_socios", msg_id, "Agente IA perguntou no Telegram")
                 except Exception:
@@ -2077,6 +2088,33 @@ def classify_message_with_ai(msg_id):
             if finalized:
                 break
 
+        # Se essa mensagem era uma continuacao de thread e o agente conseguiu
+        # executar acoes uteis sem perguntar de novo, considera a thread RESOLVIDA
+        # e limpa o awaiting_user_response da root.
+        replied_to = msg.get("replied_to_telegram_message_id")
+        if replied_to:
+            perguntou_de_novo = any(
+                isinstance(a, dict) and a.get("action") == "perguntar_no_telegram"
+                and (a.get("result") or {}).get("ok")
+                for a in actions_taken
+            )
+            executou_acao_util = any(
+                isinstance(a, dict) and a.get("action") in (
+                    "criar_tarefa", "criar_lead", "criar_contato",
+                    "registrar_acao", "anexar_msg_a_lead", "arquivar_msg"
+                ) and (a.get("result") or {}).get("ok")
+                for a in actions_taken
+            )
+            if executou_acao_util and not perguntou_de_novo:
+                try:
+                    supabase.table("mensagens_socios").update({"awaiting_user_response": False}) \
+                        .eq("telegram_chat_id", msg.get("telegram_chat_id")) \
+                        .eq("telegram_message_id", replied_to) \
+                        .execute()
+                    print(f"✅ Thread resolvida: root tg_id={replied_to} marcada awaiting=false")
+                except Exception as e:
+                    print(f"⚠️ erro limpando awaiting da root: {e}")
+
         update = {
             "ai_status": "processed",
             "ai_reasoning": final_summary or "Agente nao finalizou explicitamente",
@@ -2196,43 +2234,24 @@ def webhook_telegram():
         except Exception as e:
             print(f"webhook_telegram: erro lookup thread root: {e}")
 
-    # Heuristica de continuacao implicita: se o socio nao deu reply explicito mas
-    # o bot fez uma pergunta nos ultimos 60 min sem resposta, considera essa mensagem
-    # como continuacao dessa thread. Resolve o caso comum do socio mandar
-    # mensagem normal em vez de "reply" no Telegram.
-    #
-    # IMPORTANTE: nao filtramos por status='inbox' porque as tools do agente
-    # (criar_tarefa, registrar_acao) marcam a propria mensagem como 'triado'
-    # imediatamente — entao a msg root da thread ja vira 'triado' antes do
-    # socio responder. Filtrar por inbox deixava a heuristica cega.
-    #
-    # Em vez disso pegamos a ULTIMA mensagem do socio (anterior a atual) e
-    # checamos se ela tem perguntar_no_telegram pendente. Se a ultima msg do
-    # socio era outra conversa sem pergunta, nao associa (assunto mudou).
-    if thread_root_id is None and supabase:
+    # Continuacao DETERMINISTICA: se existe mensagem do mesmo socio nesse chat
+    # com awaiting_user_response=true, essa nova mensagem e a resposta a pergunta
+    # pendente do bot. Sem heuristica, sem race condition, sem dependencia de
+    # status temporal — flag explicito setado pela tool perguntar_no_telegram.
+    if thread_root_id is None and supabase and sender.get("id"):
         try:
-            cutoff = (datetime.now() - timedelta(minutes=60)).isoformat()
-            ultima = supabase.table("mensagens_socios").select("telegram_message_id, ai_actions_taken") \
+            aguardando = supabase.table("mensagens_socios").select("telegram_message_id") \
                 .eq("telegram_chat_id", chat_id) \
+                .eq("telegram_user_id", sender.get("id")) \
                 .eq("from_bot", False) \
-                .eq("ai_status", "processed") \
-                .lt("telegram_message_id", message_id) \
-                .gte("created_at", cutoff) \
+                .eq("awaiting_user_response", True) \
                 .order("telegram_message_id", desc=True) \
                 .limit(1).execute()
-            if ultima.data:
-                last = ultima.data[0]
-                acts = last.get("ai_actions_taken") or []
-                pediu_resposta = any(
-                    isinstance(a, dict) and a.get("action") == "perguntar_no_telegram"
-                    and (a.get("result") or {}).get("ok")
-                    for a in acts
-                )
-                if pediu_resposta and last.get("telegram_message_id"):
-                    thread_root_id = last["telegram_message_id"]
-                    print(f"🧵 Continuacao implicita: msg {_mascara_id(message_id)} → thread {_mascara_id(thread_root_id)}")
+            if aguardando.data:
+                thread_root_id = aguardando.data[0]["telegram_message_id"]
+                print(f"🧵 Thread aguardando resposta: msg {_mascara_id(message_id)} → root {_mascara_id(thread_root_id)}")
         except Exception as e:
-            print(f"webhook_telegram: erro continuacao implicita: {e}")
+            print(f"webhook_telegram: erro awaiting lookup: {e}")
 
     registro = {
         "telegram_message_id": message_id,
