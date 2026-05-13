@@ -1918,15 +1918,75 @@ def classify_message_with_ai(msg_id):
         sender = msg.get("sender_name") or msg.get("sender_username") or "socio"
 
         # Se a mensagem faz parte de uma thread (continuacao de conversa com o bot),
-        # carrega o historico completo pra dar contexto.
+        # carrega o historico completo e monta um sumario ESTRUTURADO com as entidades
+        # ja criadas. Mostrar so o texto cru das mensagens anteriores confunde o modelo
+        # (ele espelha respostas do bot tipo "falta contexto") — o sumario destacado e
+        # muito mais robusto.
         thread_history = _load_thread_history(msg)
         if thread_history:
-            ctx_lines = ["[Esta mensagem e CONTINUACAO de uma conversa que voce ja teve. Considere todo o historico antes de agir:]\n"]
+            leads_criados, contatos_criados, tarefas_criadas = [], [], []
+            historicos_registrados, perguntas_pendentes = 0, []
+            root_msg = None
             for h in thread_history:
-                who = "🤖 Bot Node" if h.get("from_bot") else f"👤 {h.get('sender_name') or 'socio'}"
-                ctx_lines.append(f"{who}: {h.get('text') or '(sem texto)'}")
-            ctx_lines.append(f"\n[Nova resposta agora:]\n👤 {sender}: {msg['text']}")
-            user_content = "\n".join(ctx_lines)
+                if root_msg is None and not h.get("from_bot"):
+                    root_msg = h
+                for a in (h.get("ai_actions_taken") or []):
+                    if not isinstance(a, dict):
+                        continue
+                    action = a.get("action")
+                    result = a.get("result") or {}
+                    if not result.get("ok"):
+                        continue
+                    if action == "criar_lead":
+                        leads_criados.append({"id": result.get("id"), "nome": result.get("nome")})
+                    elif action == "criar_contato":
+                        contatos_criados.append({"id": result.get("id"), "nome": result.get("nome"), "lead_id": result.get("lead_id")})
+                    elif action == "criar_tarefa":
+                        tarefas_criadas.append({"id": result.get("id"), "titulo": result.get("titulo"), "lead_id": result.get("lead_id")})
+                    elif action == "registrar_acao":
+                        historicos_registrados += 1
+                    elif action == "perguntar_no_telegram":
+                        q = (a.get("args") or {}).get("pergunta")
+                        if q:
+                            perguntas_pendentes.append(q)
+
+            ctx = []
+            ctx.append("═════════════════════════════════════════════════")
+            ctx.append("CONTINUACAO DE THREAD — voce JA conversou nesta thread.")
+            ctx.append("═════════════════════════════════════════════════")
+            if root_msg and root_msg.get("text"):
+                ctx.append(f'\nMensagem ORIGINAL do socio (inicio da conversa):\n"{root_msg["text"]}"')
+            if leads_criados:
+                ctx.append("\n📋 LEADS JA CRIADOS nesta thread (use estes IDs, NAO crie de novo):")
+                for l in leads_criados:
+                    ctx.append(f"  - {l.get('nome')} (lead_id: {l.get('id')})")
+            if contatos_criados:
+                ctx.append("\n👤 CONTATOS JA CRIADOS:")
+                for c in contatos_criados:
+                    ctx.append(f"  - {c.get('nome')} (contato_id: {c.get('id')}, lead_id: {c.get('lead_id')})")
+            if tarefas_criadas:
+                ctx.append("\n✅ TAREFAS JA CRIADAS:")
+                for t in tarefas_criadas:
+                    ctx.append(f"  - {t.get('titulo')} (tarefa_id: {t.get('id')}, lead_id: {t.get('lead_id')})")
+            if historicos_registrados:
+                ctx.append(f"\n📜 {historicos_registrados} registro(s) de historico_acoes ja criado(s) nesta thread.")
+            if perguntas_pendentes:
+                ctx.append("\n❓ PERGUNTAS QUE VOCE FEZ E ESTAO PENDENTES (a nova mensagem do socio deve ser a RESPOSTA):")
+                for q in perguntas_pendentes:
+                    ctx.append(f'  - "{q}"')
+            ctx.append("\n═════════════════════════════════════════════════")
+            ctx.append(f"NOVA MENSAGEM DO SOCIO ({sender}) — provavelmente a RESPOSTA as perguntas acima:")
+            ctx.append(f'"{msg["text"]}"')
+            ctx.append("═════════════════════════════════════════════════")
+            ctx.append("")
+            ctx.append("INSTRUCAO CRITICA:")
+            ctx.append("- A nova mensagem acima e a RESPOSTA do socio a perguntas que VOCE fez. USE-A pra completar a acao que faltava.")
+            ctx.append("- USE OS IDS de leads/contatos/tarefas que JA EXISTEM (listados acima). NUNCA crie duplicata.")
+            ctx.append("- Se a resposta complementa info que faltava (ex: data/hora de uma reuniao), crie a tarefa de reuniao usando o lead_id JA EXISTENTE.")
+            ctx.append("- NAO PERGUNTE de novo o que ja foi respondido nesta thread. O contexto e completo acima.")
+            ctx.append("- Termine com responder_no_telegram dando o resumo do que fez agora, depois finalizar.")
+            user_content = "\n".join(ctx)
+            print(f"🧵 Thread carregada: {len(thread_history)} msgs, lead(s)={[l['nome'] for l in leads_criados]}, perg_pendentes={len(perguntas_pendentes)}")
         else:
             user_content = f"Mensagem de {sender} no grupo Telegram interno:\n\n{msg['text']}"
 
