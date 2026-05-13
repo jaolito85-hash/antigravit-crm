@@ -88,11 +88,16 @@ O CRM precisa ser o **cérebro operacional dos 3 sócios** (João + sócio + inv
      - Cada cliente novo → adicionar em `MONITORED_PROJECTS` (server.py:1006) + variáveis no Coolify.
 
 ### URLs e infra em produção
+- **Repo canônico:** `jaolito85-hash/antigravit-crm` (branch `main`) — confirmado pela Coolify.
+- **Domínio do CRM:** `https://crm.nodedata.com.br`
+- **Build:** Dockerfile, deploy automático via Coolify a cada push em `main`.
 - VPS: Hostinger
 - Orquestração: Coolify
-- Bancos: Supabase (1 projeto por vertical)
+- Banco: Supabase (1 projeto por vertical)
 - WhatsApp: Evolution API (instância dos sócios)
-- Domínios: `*.nodedata.com.br` (`prefeitura`, `atacaforte`, etc.)
+- Domínios dos clientes monitorados: `*.nodedata.com.br` (`prefeitura`, `atacaforte`, etc.)
+
+> ⚠️ Existe uma pasta local `crm-nodedata` no Windows do João que **não é repositório git** e não está conectada a nada — é um snapshot solto. **Não usar como referência.** A única fonte de verdade é este repo.
 
 ### Roadmap sugerido (ordem de impacto x esforço)
 1. Webhook Evolution API → endpoint `/webhook/sociedade` que grava mensagem bruta em uma nova tabela `mensagens_socios`.
