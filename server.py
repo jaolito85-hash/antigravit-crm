@@ -1316,6 +1316,9 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 # ============================================================
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1")
+# Setado automaticamente quando OpenAI rejeitar temperature pro modelo configurado.
+# Evita reincidir o erro nas proximas chamadas dentro da mesma instancia.
+_AGENT_TEMP_DISABLED = False
 openai_client = None
 if OPENAI_API_KEY:
     try:
@@ -1936,7 +1939,8 @@ def classify_message_with_ai(msg_id):
         final_summary = None
 
         # Reasoning models (o1, o3, o4-mini, gpt-5-thinking, etc) so aceitam
-        # temperature=1 (default) e demoram mais. Detectamos pelo nome.
+        # temperature=1 (default). Detectamos pelo nome OU descobrimos no runtime
+        # via fallback automatico (vide _AGENT_TEMP_DISABLED).
         _m = OPENAI_MODEL.lower()
         _is_reasoning = _m.startswith("o1") or _m.startswith("o3") or _m.startswith("o4") or "thinking" in _m or "reasoning" in _m
         _completion_kwargs = {
@@ -1945,14 +1949,31 @@ def classify_message_with_ai(msg_id):
             "tool_choice": "required",
             "timeout": 90 if _is_reasoning else 45
         }
-        if not _is_reasoning:
+        global _AGENT_TEMP_DISABLED
+        if not _is_reasoning and not _AGENT_TEMP_DISABLED:
             _completion_kwargs["temperature"] = 0.1
 
         for i in range(max_iter):
-            completion = openai_client.chat.completions.create(
-                messages=messages,
-                **_completion_kwargs
-            )
+            try:
+                completion = openai_client.chat.completions.create(
+                    messages=messages,
+                    **_completion_kwargs
+                )
+            except Exception as oe:
+                _err = str(oe).lower()
+                # Fallback automatico: alguns reasoning models nao tem prefixo
+                # obvio mas rejeitam temperature em runtime. Detecta, marca global
+                # pra proximas mensagens nao reincidir, e refaz a chamada.
+                if "temperature" in _err and ("does not support" in _err or "only the default" in _err) and "temperature" in _completion_kwargs:
+                    _AGENT_TEMP_DISABLED = True
+                    _completion_kwargs.pop("temperature", None)
+                    print(f"⚠️ {OPENAI_MODEL} rejeitou temperature; refazendo sem o parametro (cache global ativado)")
+                    completion = openai_client.chat.completions.create(
+                        messages=messages,
+                        **_completion_kwargs
+                    )
+                else:
+                    raise
             choice = completion.choices[0]
             resp = choice.message
 
