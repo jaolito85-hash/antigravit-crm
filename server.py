@@ -1311,6 +1311,235 @@ TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 TELEGRAM_ALLOWED_CHAT_ID = os.getenv("TELEGRAM_ALLOWED_CHAT_ID", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
+# ============================================================
+# AGENTE IA — passo 3 do roadmap. Classifica mensagens do Telegram
+# ============================================================
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+openai_client = None
+if OPENAI_API_KEY:
+    try:
+        from openai import OpenAI
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+        print(f"🤖 OpenAI cliente inicializado ({OPENAI_MODEL})")
+    except Exception as _oe:
+        print(f"⚠️ OpenAI client falhou ao inicializar: {_oe}")
+else:
+    print("⚠️ OPENAI_API_KEY ausente — agente IA desligado (CRM segue funcionando)")
+
+
+# Tools (function calling). Cada uma exige confidence + reasoning.
+AI_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "criar_tarefa",
+            "description": "Cria uma nova tarefa a partir da mensagem. Use quando a mensagem pede uma acao concreta a ser feita (ligar pra X, preparar proposta, agendar reuniao, etc).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "titulo": {"type": "string", "description": "Titulo curto da tarefa (max 80 chars)"},
+                    "descricao": {"type": "string", "description": "Detalhamento opcional"},
+                    "responsavel": {"type": "string", "enum": ["Joao", "Guilherme", "Marcos"], "description": "Quem deve executar"},
+                    "data_vencimento": {"type": "string", "description": "Data ISO YYYY-MM-DD. Calcule baseado em DATA DE HOJE para termos relativos."},
+                    "prioridade": {"type": "string", "enum": ["alta", "media", "baixa"]},
+                    "tipo": {"type": "string", "enum": ["ligacao", "email", "reuniao", "visita", "demo", "proposta", "outro"]},
+                    "lead_id": {"type": ["string", "null"], "description": "UUID do lead da lista se mencionado; null se nao se aplica"},
+                    "confidence": {"type": "number", "description": "0.0-1.0 confianca nessa acao"},
+                    "reasoning": {"type": "string", "description": "Justificativa curta em PT-BR (max 200 chars)"}
+                },
+                "required": ["titulo", "responsavel", "data_vencimento", "prioridade", "tipo", "confidence", "reasoning"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "criar_nota_em_lead",
+            "description": "Registra a mensagem como anotacao no historico de um lead. Use quando a mensagem so registra um fato sobre um cliente, sem pedir acao (ex: 'falei com Cianorte hoje, eles gostaram').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string", "description": "UUID do lead da lista"},
+                    "anotacao": {"type": "string", "description": "Texto da nota (pode reformular a mensagem)"},
+                    "confidence": {"type": "number"},
+                    "reasoning": {"type": "string"}
+                },
+                "required": ["lead_id", "anotacao", "confidence", "reasoning"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "anexar_a_lead",
+            "description": "Vincula a mensagem a um lead sem criar tarefa nem nota — util quando a mensagem mostra contexto/foto/audio que vale guardar no historico do cliente mas nao precisa virar acao.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "reasoning": {"type": "string"}
+                },
+                "required": ["lead_id", "confidence", "reasoning"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "arquivar",
+            "description": "Marca a mensagem como arquivada. Use para mensagens triviais (bom dia, ok, emojis sozinhos, brincadeiras internas que nao tem valor de negocio).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "confidence": {"type": "number"},
+                    "reasoning": {"type": "string"}
+                },
+                "required": ["confidence", "reasoning"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "nao_fazer_nada",
+            "description": "Use quando voce nao tem confianca suficiente para decidir uma acao automatica (confidence < 0.5). A mensagem fica na Inbox para o socio triar manualmente.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "confidence": {"type": "number"},
+                    "reasoning": {"type": "string"}
+                },
+                "required": ["confidence", "reasoning"]
+            }
+        }
+    }
+]
+
+
+def _build_ai_system_prompt():
+    """Monta o system prompt com contexto da empresa e leads atuais.
+    Como esse prompt fica praticamente igual entre chamadas, o OpenAI usa cache
+    automatico (50% desconto no input) quando ultrapassa 1024 tokens.
+    """
+    leads_data = []
+    if supabase:
+        try:
+            res = supabase.table("leads").select("id, nome, status, cidade, estado, verticais(nome)").limit(200).execute()
+            leads_data = res.data or []
+        except Exception:
+            leads_data = []
+    leads_str = "\n".join(
+        f"- {l.get('nome', '?')} (id: {l['id']}, status: {l.get('status', '—')}, cidade: {l.get('cidade', '—')}/{l.get('estado', '—')}, vertical: {(l.get('verticais') or {}).get('nome', '—')})"
+        for l in leads_data
+    ) or "(nenhum lead cadastrado)"
+
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    return f"""Voce e o agente assistente operacional da Node Data — empresa que desenvolve software de inteligencia (analise de sentimento via WhatsApp) para prefeituras e campanhas politicas.
+
+Os 3 socios sao:
+- Joao (dono, comercial e tecnico)
+- Guilherme (socio)
+- Marcos (socio)
+
+Voce le mensagens que eles trocam num grupo Telegram interno e propoe a acao mais apropriada para o CRM.
+
+DATA DE HOJE: {hoje}
+
+LEADS NA BASE (use o id exato quando precisar vincular):
+{leads_str}
+
+REGRAS DE CLASSIFICACAO:
+1. Se a mensagem menciona um cliente da lista, SEMPRE passe o lead_id correspondente.
+2. Para datas relativas (amanha, sexta, semana que vem), calcule a data ISO baseada em DATA DE HOJE.
+3. Mensagens triviais ("bom dia", "ok", "👍", emojis sozinhos) → arquivar.
+4. Mensagem registra um fato sobre cliente sem pedir acao → criar_nota_em_lead.
+5. Mensagem pede acao explicita ("preciso enviar proposta amanha", "ligar pro Paulo") → criar_tarefa.
+6. Mensagem traz contexto util pra guardar no lead (foto, audio, info recebida) mas sem acao → anexar_a_lead.
+7. Mensagem ambigua, varias interpretacoes possiveis, ou confidence < 0.5 → nao_fazer_nada (deixa pro humano triar).
+8. Reasoning sempre em PT-BR e curto (max 200 chars)."""
+
+
+def classify_message_with_ai(msg_id):
+    """Roda em thread daemon depois que webhook grava a mensagem.
+    Le a msg, classifica com OpenAI, atualiza row com a proposta da IA.
+    """
+    if not openai_client or not supabase:
+        return
+    try:
+        # Marca como em processamento
+        supabase.table("mensagens_socios").update({"ai_status": "processing"}).eq("id", msg_id).execute()
+
+        row = supabase.table("mensagens_socios").select("*").eq("id", msg_id).limit(1).execute()
+        if not row.data:
+            return
+        msg = row.data[0]
+
+        # Mensagens sem texto (so anexo) skipamos por enquanto
+        if not msg.get("text"):
+            supabase.table("mensagens_socios").update({
+                "ai_status": "skipped",
+                "ai_reasoning": "Mensagem sem texto (apenas anexo).",
+                "ai_processed_at": datetime.now().isoformat()
+            }).eq("id", msg_id).execute()
+            return
+
+        system_prompt = _build_ai_system_prompt()
+        user_msg = f"De: {msg.get('sender_name') or msg.get('sender_username') or 'socio'}\n\nMensagem: {msg['text']}"
+
+        completion = openai_client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg}
+            ],
+            tools=AI_TOOLS,
+            tool_choice="required",
+            temperature=0.2,
+            timeout=30
+        )
+
+        choice = completion.choices[0]
+        if not choice.message.tool_calls:
+            supabase.table("mensagens_socios").update({
+                "ai_status": "error",
+                "ai_reasoning": "Modelo nao chamou nenhuma tool.",
+                "ai_processed_at": datetime.now().isoformat()
+            }).eq("id", msg_id).execute()
+            return
+
+        tool_call = choice.message.tool_calls[0]
+        action = tool_call.function.name
+        try:
+            args = json.loads(tool_call.function.arguments)
+        except Exception:
+            args = {}
+
+        confidence = args.pop("confidence", None)
+        reasoning = args.pop("reasoning", None)
+
+        supabase.table("mensagens_socios").update({
+            "ai_status": "processed",
+            "ai_proposed_action": action,
+            "ai_confidence": confidence,
+            "ai_reasoning": reasoning,
+            "ai_payload": args,
+            "ai_processed_at": datetime.now().isoformat()
+        }).eq("id", msg_id).execute()
+        print(f"🤖 IA classificou msg {str(msg_id)[:8]} → {action} (conf={confidence})")
+
+    except Exception as e:
+        print(f"❌ classify_message_with_ai falhou: {e}")
+        try:
+            supabase.table("mensagens_socios").update({
+                "ai_status": "error",
+                "ai_reasoning": f"Erro: {str(e)[:200]}",
+                "ai_processed_at": datetime.now().isoformat()
+            }).eq("id", msg_id).execute()
+        except Exception:
+            pass
+
 
 def _mascara_id(valor):
     """Mascara IDs do Telegram em log, mantendo so os 4 ultimos digitos."""
@@ -1414,6 +1643,9 @@ def webhook_telegram():
             audit("create", "mensagens_socios", inserted_id, "telegram webhook")
         except Exception as audit_err:
             print(f"audit falhou (nao bloqueia): {audit_err}")
+        # Dispara classificacao IA em background — nao bloqueia o webhook
+        if openai_client and inserted_id:
+            threading.Thread(target=classify_message_with_ai, args=(inserted_id,), daemon=True).start()
         return jsonify({"status": "ok"}), 200
     except Exception as e:
         print(f"webhook_telegram: erro inserindo: {e}")
@@ -1461,6 +1693,107 @@ def api_update_mensagem_socio(msg_id):
         return jsonify(result.data[0] if result.data else {})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/mensagens-socios/<msg_id>/aprovar-ia", methods=["POST"])
+@login_required
+@role_can_write
+def api_aprovar_ia(msg_id):
+    """Executa a acao proposta pela IA. Usado pelo botao 'Aprovar sugestao' na Caixa."""
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    row = supabase.table("mensagens_socios").select("*").eq("id", msg_id).limit(1).execute()
+    if not row.data:
+        return jsonify({"error": "mensagem nao encontrada"}), 404
+    msg = row.data[0]
+    if msg.get("ai_status") != "processed":
+        return jsonify({"error": "IA ainda nao processou essa mensagem"}), 400
+
+    action = msg.get("ai_proposed_action")
+    payload = msg.get("ai_payload") or {}
+    user = session.get("display_name", "sistema")
+    now = datetime.now().isoformat()
+    triado_por = f"{user} (IA)"
+
+    try:
+        if action == "criar_tarefa":
+            tarefa_data = {
+                "titulo": (payload.get("titulo") or "(sem titulo)")[:200],
+                "descricao": payload.get("descricao") or msg.get("text"),
+                "responsavel": payload.get("responsavel") or user,
+                "data_vencimento": payload.get("data_vencimento") or datetime.now().strftime("%Y-%m-%d"),
+                "prioridade": payload.get("prioridade") or "media",
+                "tipo": payload.get("tipo") or "outro",
+                "lead_id": payload.get("lead_id"),
+                "status": "aberta"
+            }
+            result = supabase.table("tarefas").insert(tarefa_data).execute()
+            new_id = result.data[0]["id"] if result.data else None
+            supabase.table("mensagens_socios").update({
+                "status": "triado",
+                "tarefa_id": new_id,
+                "lead_id": payload.get("lead_id"),
+                "triado_em": now,
+                "triado_por": triado_por
+            }).eq("id", msg_id).execute()
+            audit("create", "tarefas", new_id, f"Aprovado pela IA: {tarefa_data['titulo']}")
+            return jsonify({"ok": True, "action": action, "tarefa_id": new_id}), 201
+
+        if action == "criar_nota_em_lead":
+            sender = msg.get("sender_name") or msg.get("sender_username") or "socio"
+            anotacao = payload.get("anotacao") or msg.get("text") or ""
+            nota_data = {
+                "lead_id": payload.get("lead_id"),
+                "tipo": "anotacao",
+                "descricao": f"[Telegram, {sender}] {anotacao}",
+                "responsavel": user
+            }
+            result = supabase.table("historico_acoes").insert(nota_data).execute()
+            new_id = result.data[0]["id"] if result.data else None
+            supabase.table("mensagens_socios").update({
+                "status": "triado",
+                "lead_id": payload.get("lead_id"),
+                "triado_em": now,
+                "triado_por": triado_por
+            }).eq("id", msg_id).execute()
+            audit("create", "historico_acoes", new_id, "Aprovado pela IA (nota)")
+            return jsonify({"ok": True, "action": action, "historico_id": new_id}), 201
+
+        if action == "anexar_a_lead":
+            supabase.table("mensagens_socios").update({
+                "status": "triado",
+                "lead_id": payload.get("lead_id"),
+                "triado_em": now,
+                "triado_por": triado_por
+            }).eq("id", msg_id).execute()
+            audit("update", "mensagens_socios", msg_id, "Anexada a lead pela IA")
+            return jsonify({"ok": True, "action": action})
+
+        if action == "arquivar":
+            supabase.table("mensagens_socios").update({
+                "status": "arquivado",
+                "triado_em": now,
+                "triado_por": triado_por
+            }).eq("id", msg_id).execute()
+            audit("update", "mensagens_socios", msg_id, "Arquivada pela IA")
+            return jsonify({"ok": True, "action": action})
+
+        # nao_fazer_nada ou desconhecida
+        return jsonify({"error": f"acao nao executavel: {action}"}), 400
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/mensagens-socios/<msg_id>/reclassificar", methods=["POST"])
+@login_required
+@role_can_write
+def api_reclassificar_ia(msg_id):
+    """Reroda a classificacao IA. Util quando os leads mudaram ou o agente foi atualizado."""
+    if not openai_client:
+        return jsonify({"error": "Agente IA desligado (OPENAI_API_KEY ausente)"}), 503
+    threading.Thread(target=classify_message_with_ai, args=(msg_id,), daemon=True).start()
+    return jsonify({"ok": True, "msg": "reclassificacao disparada em background"}), 202
 
 
 # ============================================================
