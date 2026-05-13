@@ -6,6 +6,7 @@ import os
 import json
 import secrets
 import requests
+import re
 import threading
 from datetime import datetime, timedelta
 from functools import wraps
@@ -1905,6 +1906,31 @@ def _execute_tool(tool_name, args, msg_row, msg_id, user_label="Agente IA"):
         return {"ok": False, "error": str(e)}
 
 
+_PALAVRAS_REUNIAO = ("reuni", "encontro", "marcar uma", "agendar uma")
+_PALAVRAS_DATA = ("amanh", "hoje", "segunda", "terca", "terça", "quarta", "quinta",
+                  "sexta", "sabado", "sábado", "domingo", "semana", "horas", " às ",
+                  " as ", "manha", "manhã", "tarde", "noite", " h ")
+_REGEX_DATA_NUMERICA = re.compile(r"\d{1,2}\s*[/\-]\s*\d{1,2}")
+_REGEX_HORA = re.compile(r"\d{1,2}\s*(?:h|hs|:|hora)", re.IGNORECASE)
+
+
+def mensagem_pede_reuniao_sem_data(texto):
+    """True se a mensagem original menciona reuniao/encontro mas NAO traz data+hora.
+    Usado pra bloquear o agente de criar lead/tarefa parciais na primeira passada.
+    Quando o socio responder com data/hora (continuacao), o agente cria tudo de uma vez.
+    """
+    if not texto:
+        return False
+    t = texto.lower()
+    tem_reuniao = any(p in t for p in _PALAVRAS_REUNIAO)
+    if not tem_reuniao:
+        return False
+    tem_data_num = bool(_REGEX_DATA_NUMERICA.search(texto))
+    tem_hora = bool(_REGEX_HORA.search(texto))
+    tem_palavra_data = any(p in t for p in _PALAVRAS_DATA)
+    return not (tem_data_num or tem_hora or tem_palavra_data)
+
+
 def classify_message_with_ai(msg_id):
     """Agente operacional: roda em thread daemon, le a mensagem, executa o
     workflow completo (extrair entidades, criar leads/contatos/tarefas).
@@ -2043,11 +2069,24 @@ def classify_message_with_ai(msg_id):
         # perguntar de novo. Resolve o caso em que modelos reasoning ficam
         # perguntando em loop mesmo com contexto completo.
         if thread_history:
+            # CONTINUACAO: agente DEVE executar com os dados do sumario. Tira a
+            # tool de perguntar pra forcar acao.
             tools_para_chamada = [
                 t for t in AI_TOOLS
                 if t.get("function", {}).get("name") != "perguntar_no_telegram"
             ]
             print(f"🔒 Continuacao detectada — perguntar_no_telegram bloqueada. Agente DEVE executar.")
+        elif mensagem_pede_reuniao_sem_data(msg.get("text") or ""):
+            # PRIMEIRA PASSADA, mensagem pede reuniao mas SEM data/hora claras.
+            # Bloqueia TODAS as tools de criacao — agente so pode perguntar.
+            # Quando o socio responder com data/hora, o agente cria tudo de uma vez.
+            tools_para_chamada = [
+                t for t in AI_TOOLS
+                if t.get("function", {}).get("name") in (
+                    "perguntar_no_telegram", "responder_no_telegram", "finalizar"
+                )
+            ]
+            print(f"🚫 Reuniao sem data — bloqueando criacao. Agente SO pode perguntar nesta passada.")
         else:
             tools_para_chamada = AI_TOOLS
 
@@ -2277,12 +2316,13 @@ def webhook_telegram():
 
     # Continuacao DETERMINISTICA: se existe mensagem do mesmo socio nesse chat
     # com awaiting_user_response=true, essa nova mensagem e a resposta a pergunta
-    # pendente do bot. TTL de 15 min evita "thread zumbi" — se ninguem respondeu
-    # em 15 min, considera abandonada e trata como assunto novo.
+    # pendente do bot. TTL de 15 min evita "thread zumbi".
     if thread_root_id is None and supabase and sender.get("id"):
         try:
-            cutoff_awaiting = (datetime.now() - timedelta(minutes=15)).isoformat()
-            aguardando = supabase.table("mensagens_socios").select("telegram_message_id") \
+            # Usa UTC explicito pra evitar mismatch de timezone com timestamptz do Postgres
+            from datetime import timezone as _tz
+            cutoff_awaiting = (datetime.now(_tz.utc) - timedelta(minutes=15)).isoformat()
+            aguardando = supabase.table("mensagens_socios").select("telegram_message_id, created_at") \
                 .eq("telegram_chat_id", chat_id) \
                 .eq("telegram_user_id", sender.get("id")) \
                 .eq("from_bot", False) \
@@ -2290,11 +2330,13 @@ def webhook_telegram():
                 .gte("created_at", cutoff_awaiting) \
                 .order("telegram_message_id", desc=True) \
                 .limit(1).execute()
-            if aguardando.data:
-                thread_root_id = aguardando.data[0]["telegram_message_id"]
+            data = aguardando.data or []
+            print(f"🔍 awaiting lookup: chat={chat_id} user={sender.get('id')} cutoff={cutoff_awaiting} → {len(data)} match(es)")
+            if data:
+                thread_root_id = data[0]["telegram_message_id"]
                 print(f"🧵 Thread aguardando resposta: msg {_mascara_id(message_id)} → root {_mascara_id(thread_root_id)}")
         except Exception as e:
-            print(f"webhook_telegram: erro awaiting lookup: {e}")
+            print(f"❌ webhook_telegram: erro awaiting lookup: {e}")
 
     registro = {
         "telegram_message_id": message_id,
