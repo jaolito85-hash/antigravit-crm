@@ -1861,20 +1861,22 @@ def _execute_tool(tool_name, args, msg_row, msg_id, user_label="Agente IA"):
             pergunta = (args.get("pergunta") or "").strip()
             if not pergunta:
                 return {"ok": False, "error": "pergunta vazia"}
-            # Thread root = a primeira mensagem do socio. Pode ser a atual ou uma anterior se for continuacao.
+            # Thread root = a primeira mensagem do socio (pra rastreio do historico).
+            # Em continuacao, thread_root e a msg-raiz original.
             thread_root = (msg_row or {}).get("replied_to_telegram_message_id") or (msg_row or {}).get("telegram_message_id")
             chat_id_local = (msg_row or {}).get("telegram_chat_id")
-            reply_to = (msg_row or {}).get("telegram_message_id")
-            bot_msg_id = send_telegram_message(f"❓ {pergunta}", reply_to_message_id=reply_to)
+            current_tg_id = (msg_row or {}).get("telegram_message_id")
+            bot_msg_id = send_telegram_message(f"❓ {pergunta}", reply_to_message_id=current_tg_id)
             if bot_msg_id:
                 register_bot_message_in_db(bot_msg_id, pergunta, thread_root)
-                # Marca a mensagem-raiz da thread como aguardando resposta — webhook
-                # vai usar isso pra detectar a proxima mensagem do socio como continuacao.
-                if chat_id_local and thread_root:
+                # IMPORTANTE: marca a MSG ATUAL como awaiting=true (nao a root
+                # antiga). Assim a thread "avanca" — a proxima resposta vai linkar
+                # a msg atual, evitando "thread zumbi" infinita.
+                if chat_id_local and current_tg_id:
                     try:
                         supabase.table("mensagens_socios").update({"awaiting_user_response": True}) \
                             .eq("telegram_chat_id", chat_id_local) \
-                            .eq("telegram_message_id", thread_root) \
+                            .eq("telegram_message_id", current_tg_id) \
                             .execute()
                     except Exception as e:
                         print(f"⚠️ erro marcando awaiting_user_response: {e}")
@@ -1936,6 +1938,21 @@ def classify_message_with_ai(msg_id):
         # muito mais robusto.
         thread_history = _load_thread_history(msg)
         if thread_history:
+            # Esta mensagem CONSUMIU a pergunta pendente da thread root.
+            # Limpa awaiting=false imediatamente pra evitar "thread zumbi"
+            # caso o agente perguntar de novo (vai marcar awaiting na MSG ATUAL,
+            # nao na root antiga).
+            replied_to_local = msg.get("replied_to_telegram_message_id")
+            if replied_to_local:
+                try:
+                    supabase.table("mensagens_socios").update({"awaiting_user_response": False}) \
+                        .eq("telegram_chat_id", msg.get("telegram_chat_id")) \
+                        .eq("telegram_message_id", replied_to_local) \
+                        .execute()
+                    print(f"🧹 Pergunta pendente da root tg_id={replied_to_local} consumida pela nova msg")
+                except Exception as e:
+                    print(f"⚠️ erro limpando awaiting da root: {e}")
+
             leads_criados, contatos_criados, tarefas_criadas = [], [], []
             historicos_registrados, perguntas_pendentes = 0, []
             root_msg = None
@@ -2260,15 +2277,17 @@ def webhook_telegram():
 
     # Continuacao DETERMINISTICA: se existe mensagem do mesmo socio nesse chat
     # com awaiting_user_response=true, essa nova mensagem e a resposta a pergunta
-    # pendente do bot. Sem heuristica, sem race condition, sem dependencia de
-    # status temporal — flag explicito setado pela tool perguntar_no_telegram.
+    # pendente do bot. TTL de 15 min evita "thread zumbi" — se ninguem respondeu
+    # em 15 min, considera abandonada e trata como assunto novo.
     if thread_root_id is None and supabase and sender.get("id"):
         try:
+            cutoff_awaiting = (datetime.now() - timedelta(minutes=15)).isoformat()
             aguardando = supabase.table("mensagens_socios").select("telegram_message_id") \
                 .eq("telegram_chat_id", chat_id) \
                 .eq("telegram_user_id", sender.get("id")) \
                 .eq("from_bot", False) \
                 .eq("awaiting_user_response", True) \
+                .gte("created_at", cutoff_awaiting) \
                 .order("telegram_message_id", desc=True) \
                 .limit(1).execute()
             if aguardando.data:
