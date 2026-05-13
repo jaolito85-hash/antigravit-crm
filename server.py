@@ -1440,6 +1440,34 @@ AI_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "perguntar_no_telegram",
+            "description": "Use quando voce PRECISA de mais info do socio antes de executar acao critica. Envia pergunta como reply no grupo Telegram e ENCERRA o processamento (a mensagem fica em status 'aguardando_resposta'). Quando o socio responder, o agente roda de novo com o historico completo da thread. EXEMPLOS: data/hora de reuniao nao definida, identidade do cliente ambigua, acao destrutiva pedida (apagar lead, mexer em contrato existente). NUNCA pergunte sobre coisa que voce pode inferir (datas relativas claras, valores que estao no texto).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pergunta": {"type": "string", "description": "Pergunta clara e curta em PT-BR (max 300 chars). HTML basico permitido: <b>negrito</b>, <i>italico</i>."}
+                },
+                "required": ["pergunta"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "responder_no_telegram",
+            "description": "OBRIGATORIA antes de finalizar. Envia o resumo final do que voce fez como reply no grupo Telegram, dando visibilidade do trabalho ao socio. Sempre inclua a CATEGORIA da mensagem (ideia, tarefa, reuniao, lead, proposta, follow-up, risco).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "resumo": {"type": "string", "description": "Resumo curto e estruturado em PT-BR (max 500 chars). Use HTML: <b>negrito</b>, <i>italico</i>. Comece com a categoria detectada em negrito. Ex: '✅ <b>Lead</b> · Registrei <b>Prefeitura X</b>, criei tarefa de follow-up. <i>Faltou: data da reuniao.</i>'"}
+                },
+                "required": ["resumo"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "arquivar_msg",
             "description": "Arquiva a mensagem (triviais, brincadeiras, emojis sozinhos, conversa solta sem valor de negocio).",
             "parameters": {"type": "object", "properties": {}, "required": []}
@@ -1460,6 +1488,87 @@ AI_TOOLS = [
         }
     }
 ]
+
+
+def send_telegram_message(text, reply_to_message_id=None):
+    """Envia mensagem no grupo dos socios via Bot API. Retorna telegram_message_id ou None."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_ALLOWED_CHAT_ID:
+        print("⚠️ TELEGRAM_BOT_TOKEN/ALLOWED_CHAT_ID ausentes — bot nao pode responder")
+        return None
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": int(TELEGRAM_ALLOWED_CHAT_ID),
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
+        }
+        if reply_to_message_id:
+            payload["reply_to_message_id"] = int(reply_to_message_id)
+            payload["allow_sending_without_reply"] = True
+        r = requests.post(url, json=payload, timeout=15)
+        if r.status_code == 200 and r.json().get("ok"):
+            return r.json()["result"]["message_id"]
+        print(f"⚠️ send_telegram_message status={r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        print(f"⚠️ send_telegram_message erro: {e}")
+    return None
+
+
+def register_bot_message_in_db(bot_message_id, text, thread_root_telegram_msg_id):
+    """Grava mensagem enviada pelo bot na tabela mensagens_socios pra rastrear threads.
+    thread_root_telegram_msg_id = telegram_message_id da mensagem ORIGINAL do socio
+    que iniciou a conversa. Permite reconstruir o contexto quando o socio responder.
+    """
+    if not supabase or not bot_message_id:
+        return
+    try:
+        supabase.table("mensagens_socios").insert({
+            "telegram_message_id": bot_message_id,
+            "telegram_chat_id": int(TELEGRAM_ALLOWED_CHAT_ID) if TELEGRAM_ALLOWED_CHAT_ID else None,
+            "sender_name": "Bot Node",
+            "from_bot": True,
+            "text": text,
+            "replied_to_telegram_message_id": thread_root_telegram_msg_id,
+            "status": "arquivado",
+            "raw_payload": {},
+            "ai_status": "skipped"
+        }).execute()
+    except Exception as e:
+        print(f"⚠️ register_bot_message_in_db: {e}")
+
+
+def _load_thread_history(msg_row):
+    """Se a mensagem faz parte de uma thread (replied_to_telegram_message_id setado),
+    carrega o historico completo (mensagem-raiz + todas as respostas do bot/socios)
+    em ordem cronologica pra o agente ter contexto."""
+    if not supabase:
+        return []
+    replied_to = msg_row.get("replied_to_telegram_message_id")
+    if not replied_to:
+        return []
+    chat_id = msg_row.get("telegram_chat_id")
+    if not chat_id:
+        return []
+    try:
+        # Mensagem-raiz (a primeira do socio na thread)
+        root = supabase.table("mensagens_socios").select("*") \
+            .eq("telegram_chat_id", chat_id) \
+            .eq("telegram_message_id", replied_to).limit(1).execute()
+        history = []
+        if root.data:
+            history.append(root.data[0])
+        # Mensagens entre a raiz e a atual (replies do bot e do socio)
+        between = supabase.table("mensagens_socios").select("*") \
+            .eq("telegram_chat_id", chat_id) \
+            .gt("telegram_message_id", replied_to) \
+            .lt("telegram_message_id", msg_row.get("telegram_message_id") or 0) \
+            .order("telegram_message_id").execute()
+        history.extend(between.data or [])
+        return history
+    except Exception as e:
+        print(f"_load_thread_history erro: {e}")
+        return []
 
 
 def _build_agent_system_prompt():
@@ -1498,12 +1607,7 @@ Os 3 socios sao:
 - Guilherme (socio)
 - Marcos (socio)
 
-VOCE TEM AUTONOMIA TOTAL para EXECUTAR acoes no CRM. Quando uma mensagem nova chega no grupo Telegram interno dos socios, voce deve:
-1. Extrair TODAS as entidades mencionadas (clientes, pessoas, telefones, prazos, valores, assuntos).
-2. Executar TODAS as acoes necessarias usando as tools (criar leads novos, criar contatos, registrar interacoes passadas, criar tarefas futuras).
-3. SEMPRE chamar `finalizar` no final com um resumo curto.
-
-VOCE NAO PROPOE — VOCE EXECUTA. Nao espera aprovacao.
+Voce e o CEREBRO operacional dos 3 socios. Quando uma mensagem chega no grupo Telegram interno, voce LE, EXECUTA o que e seguro, e PERGUNTA quando falta info critica. SEMPRE da feedback final no Telegram resumindo o que fez.
 
 DATA DE HOJE: {hoje}
 
@@ -1513,51 +1617,102 @@ LEADS EXISTENTES NO CRM (use o id exato quando referenciar):
 VERTICAIS DISPONIVEIS (use o id em criar_lead quando aplicavel):
 {verticais_str}
 
+═══════════════════════════════════════════════════
+CATEGORIAS — toda mensagem cai em UMA destas 7:
+═══════════════════════════════════════════════════
+- IDEIA: pensamento solto, brainstorm, sugestao sem acao imediata
+- TAREFA: algo a fazer no futuro pelos socios
+- REUNIAO: encontro presencial ou virtual com cliente/fornecedor
+- LEAD: novo prospect/cliente a registrar
+- PROPOSTA: comercial enviada ou recebida
+- FOLLOW-UP: retomar contato com cliente existente
+- RISCO: cliente reclamando, prazo vencendo, problema operacional
+
+Sempre INCLUA a categoria detectada no resumo final (em negrito).
+
+═══════════════════════════════════════════════════
+TOOLS DE ESCRITA NO TELEGRAM (CRITICAS):
+═══════════════════════════════════════════════════
+- perguntar_no_telegram(pergunta): use SOMENTE quando faltar info critica e voce nao consegue inferir. Encerra o processamento.
+- responder_no_telegram(resumo): OBRIGATORIA antes de finalizar. Sempre da feedback do que voce fez.
+
+REGRAS DE SEGURANCA (NUNCA QUEBRE):
+1. NUNCA marque reuniao sem data E hora claras. Se a mensagem diz "semana que vem" sem dia exato, PERGUNTE.
+2. NUNCA execute acao destrutiva (apagar lead, alterar contrato existente, cancelar tarefa de outro socio).
+3. NUNCA envie mensagem pra cliente externo. So perguntar_no_telegram e responder_no_telegram (que ficam no grupo interno).
+4. NUNCA invente lead_id. So use IDs que vieram do buscar_lead ou do retorno de criar_lead.
+5. Datas relativas CLARAS (amanha, sexta, dia 15, em 3 dias) calcule normalmente — NAO pergunte.
+
+═══════════════════════════════════════════════════
 WORKFLOW POR TIPO DE MENSAGEM:
+═══════════════════════════════════════════════════
 
-A) Mensagem menciona NOVO cliente (ainda nao na lista de leads):
-  1. buscar_lead(query=nome do cliente) — SEMPRE primeiro, pra evitar duplicata
-  2. Se nao encontrou: criar_lead(nome, tipo, cidade, estado, ...). Para prefeituras tipo=governo. Para candidatos tipo=politico.
-  3. Se a mensagem menciona PESSOAS com nome+telefone: criar_contato pra cada uma, vinculadas ao lead
-  4. Se a mensagem conta acao JA ocorrida ("falei com", "mandei proposta"): registrar_acao no historico
-  5. Se a mensagem pede acao FUTURA ("ligar amanha", "preparar X"): criar_tarefa
-  6. finalizar(summary)
+A) Mensagem menciona NOVO cliente:
+  1. buscar_lead(query=nome do cliente) — SEMPRE primeiro
+  2. Se nao existe: criar_lead. Prefeituras=governo, empresas=empresa, candidatos=politico
+  3. Pessoas com nome+telefone: criar_contato vinculado ao lead
+  4. Acoes JA ocorridas ("falei com", "mandei proposta"): registrar_acao
+  5. Acoes FUTURAS ("ligar amanha", "preparar X"): criar_tarefa
+  6. Se falta info critica pra reuniao (data/hora) -> perguntar_no_telegram e PULA pro 8
+  7. responder_no_telegram com resumo + categoria
+  8. finalizar
 
-B) Mensagem menciona cliente EXISTENTE:
-  1. Identifique o lead na lista acima pelo id
-  2. Mesmas etapas 3-6 do caso A
+B) Mensagem menciona cliente EXISTENTE: igual A mas pula passo 2.
 
-C) Mensagem sem entidade clara mas com info util:
-  - Use anexar_msg_a_lead se relevante a algum cliente
-  - Caso contrario, deixe ela na inbox: chame so finalizar sem fazer nada
+C) Mensagem trivial (bom dia, "ok", "kk", emoji): arquivar_msg + responder_no_telegram opcional + finalizar.
 
-D) Mensagem trivial (bom dia, ok, "kk", emoji sozinho, brincadeira):
-  - arquivar_msg + finalizar
+D) Continuacao de thread (voce ja conversou antes — o historico vem no input):
+   - Considere TODA a conversa pra entender o que falta
+   - Se a resposta do socio fornece a info que voce tinha pedido, execute a acao
+   - Se ainda falta, perguntar_no_telegram com nova pergunta especifica
+   - responder_no_telegram + finalizar
 
-REGRAS DE OURO:
+═══════════════════════════════════════════════════
+REGRAS DE QUALIDADE:
+═══════════════════════════════════════════════════
+- TITULO DE TAREFA curto e acionavel: "Ligar para Carlos sobre CPSI", "Preparar proposta Cianorte". NUNCA copie a mensagem inteira.
+- TELEFONE: extraia so digitos. "44 99154-8588" -> "44991548588".
+- RESPONSAVEL DEFAULT da tarefa: o socio que MANDOU a mensagem.
+- Estado default: PR. Use outro so se mencionado.
+- Em duvida entre tarefa e registro: prazo futuro = tarefa, fato passado = registrar_acao.
 
-- TITULO DE TAREFA: nunca copie a mensagem inteira. Faca curto e acionavel: "Ligar para Carlos sobre CPSI", "Preparar proposta Cianorte", "Visitar Atacaforte sexta".
-- DATA RELATIVA: calcule sempre baseado em DATA DE HOJE acima.
-- TELEFONE: extraia so digitos. "44 99154-8588" → "44991548588".
-- RESPONSAVEL DEFAULT da tarefa: o socio que MANDOU a mensagem (nao assume Joao se Marcos mandou).
-- Estado default: PR. Use outro so se a mensagem indicar.
-- Tipo de lead: prefeitura/secretaria = "governo", empresa privada = "empresa", candidato = "politico".
-- NUNCA invente lead_id. Use so o que veio da lista acima ou de criar_lead.
-- Em duvida entre acao e nota: se tem prazo futuro = tarefa, se e fato passado = registrar_acao.
-
-EXEMPLO:
-mensagem: "falei com pessoal da prefeitura de Maringa, me passaram o contato do carlos 44 991548588, precisa ligar pra ele amanha sobre CPSI"
+═══════════════════════════════════════════════════
+EXEMPLO 1 (info completa — executa direto):
+═══════════════════════════════════════════════════
+Mensagem: "falei com prefeitura de Maringa, me passaram contato do carlos 44 991548588, precisa ligar amanha sobre CPSI"
 
 Workflow:
 1. buscar_lead(query="Maringa") → []
 2. criar_lead(nome="Prefeitura de Maringa", tipo="governo", cidade="Maringa", estado="PR")
 3. criar_contato(lead_id=<acima>, nome="Carlos", telefone="44991548588")
-4. registrar_acao(lead_id=<acima>, tipo="ligacao", descricao="Contato inicial com pessoal da prefeitura. Conseguiu o contato do Carlos.")
-5. criar_tarefa(titulo="Ligar para Carlos sobre CPSI", lead_id=<acima>, responsavel="Marcos", data_vencimento="{hoje}", prioridade="alta", tipo="ligacao", descricao="Carlos passou-se via prefeitura de Maringa. Falar sobre CPSI.")
-   (substitua a data_vencimento pela data de AMANHA calculada de DATA DE HOJE)
-6. finalizar(summary="Criei lead Prefeitura de Maringa, contato Carlos, registrei a interacao e criei tarefa de ligacao pra amanha.")
+4. registrar_acao(lead_id=<acima>, tipo="ligacao", descricao="Conversou com pessoal da prefeitura, conseguiu contato do Carlos")
+5. criar_tarefa(titulo="Ligar para Carlos sobre CPSI", lead_id=<acima>, responsavel="Marcos", data_vencimento="<amanha>", prioridade="alta", tipo="ligacao")
+6. responder_no_telegram(resumo="✅ <b>Lead</b> · Registrei <b>Prefeitura de Maringa</b>. Contato Carlos (44 99154-8588) criado. Tarefa de ligacao pra amanha criada. ✓ Pronto.")
+7. finalizar
 
-Aja sempre. Voce e operacional, nao consultivo."""
+═══════════════════════════════════════════════════
+EXEMPLO 2 (falta info — pergunta antes):
+═══════════════════════════════════════════════════
+Mensagem: "Conversei com o prefeito de X, ele quer reuniao semana que vem sobre monitoramento WhatsApp."
+
+Workflow:
+1. buscar_lead(query="X") → []
+2. criar_lead(nome="Prefeitura de X", tipo="governo", cidade="X", estado="PR", notas="Prefeito interessado em monitoramento WhatsApp")
+3. registrar_acao(lead_id=<acima>, tipo="reuniao_virtual", descricao="Conversa inicial. Prefeito mostrou interesse em monitoramento de demandas via WhatsApp.")
+4. criar_tarefa(titulo="Follow-up reuniao com prefeito de X", lead_id=<acima>, responsavel=<socio que mandou>, data_vencimento="<+2 dias>", prioridade="alta", tipo="reuniao", descricao="Confirmar data/hora da reuniao apos resposta no Telegram")
+5. responder_no_telegram(resumo="✅ <b>Lead/Reuniao</b> · Registrei <b>Prefeitura de X</b> e criei follow-up. <i>Falta definir data e hora da reuniao.</i>")
+6. perguntar_no_telegram(pergunta="🤔 Que dia e horario da reuniao com o prefeito? '<i>Semana que vem</i>' inclui 5 dias uteis. Me passa um dia e hora pra eu criar a tarefa de reuniao com prazo certo.")
+7. finalizar (a thread continua quando o socio responder)
+
+NA THREAD QUANDO O SOCIO RESPONDER ("quinta as 14h"):
+- Voce recebe o historico completo
+- Identifica que a info que faltava chegou
+- criar_tarefa(titulo="Reuniao com prefeito de X — monitoramento WhatsApp", lead_id=<aquele>, data_vencimento="<quinta calculada>", hora="14:00", tipo="reuniao", prioridade="alta")
+- responder_no_telegram(resumo="✅ <b>Reuniao</b> agendada: <b>quinta-feira as 14h</b> com prefeito de X. Tarefa criada e vinculada ao lead.")
+- finalizar
+
+═══════════════════════════════════════════════════
+Aja sempre. Voce e operacional, nao consultivo. PERGUNTA so quando falta info CRITICA."""
 
 
 def _execute_tool(tool_name, args, msg_row, msg_id, user_label="Agente IA"):
@@ -1698,6 +1853,35 @@ def _execute_tool(tool_name, args, msg_row, msg_id, user_label="Agente IA"):
                 pass
             return {"ok": True, "kind": "arquivar"}
 
+        if tool_name == "perguntar_no_telegram":
+            pergunta = (args.get("pergunta") or "").strip()
+            if not pergunta:
+                return {"ok": False, "error": "pergunta vazia"}
+            # Thread root = a primeira mensagem do socio. Pode ser a atual ou uma anterior se for continuacao.
+            thread_root = (msg_row or {}).get("replied_to_telegram_message_id") or (msg_row or {}).get("telegram_message_id")
+            reply_to = (msg_row or {}).get("telegram_message_id")
+            bot_msg_id = send_telegram_message(f"❓ {pergunta}", reply_to_message_id=reply_to)
+            if bot_msg_id:
+                register_bot_message_in_db(bot_msg_id, pergunta, thread_root)
+                try:
+                    audit("update", "mensagens_socios", msg_id, "Agente IA perguntou no Telegram")
+                except Exception:
+                    pass
+                return {"ok": True, "kind": "pergunta", "telegram_message_id": bot_msg_id, "pergunta": pergunta}
+            return {"ok": False, "error": "falha ao enviar mensagem no Telegram"}
+
+        if tool_name == "responder_no_telegram":
+            resumo = (args.get("resumo") or "").strip()
+            if not resumo:
+                return {"ok": False, "error": "resumo vazio"}
+            thread_root = (msg_row or {}).get("replied_to_telegram_message_id") or (msg_row or {}).get("telegram_message_id")
+            reply_to = (msg_row or {}).get("telegram_message_id")
+            bot_msg_id = send_telegram_message(resumo, reply_to_message_id=reply_to)
+            if bot_msg_id:
+                register_bot_message_in_db(bot_msg_id, resumo, thread_root)
+                return {"ok": True, "kind": "resumo", "telegram_message_id": bot_msg_id}
+            return {"ok": False, "error": "falha ao enviar resumo no Telegram"}
+
         return {"ok": False, "error": f"tool desconhecida: {tool_name}"}
 
     except Exception as e:
@@ -1729,7 +1913,19 @@ def classify_message_with_ai(msg_id):
 
         system_prompt = _build_agent_system_prompt()
         sender = msg.get("sender_name") or msg.get("sender_username") or "socio"
-        user_content = f"Mensagem de {sender} no grupo Telegram interno:\n\n{msg['text']}"
+
+        # Se a mensagem faz parte de uma thread (continuacao de conversa com o bot),
+        # carrega o historico completo pra dar contexto.
+        thread_history = _load_thread_history(msg)
+        if thread_history:
+            ctx_lines = ["[Esta mensagem e CONTINUACAO de uma conversa que voce ja teve. Considere todo o historico antes de agir:]\n"]
+            for h in thread_history:
+                who = "🤖 Bot Node" if h.get("from_bot") else f"👤 {h.get('sender_name') or 'socio'}"
+                ctx_lines.append(f"{who}: {h.get('text') or '(sem texto)'}")
+            ctx_lines.append(f"\n[Nova resposta agora:]\n👤 {sender}: {msg['text']}")
+            user_content = "\n".join(ctx_lines)
+        else:
+            user_content = f"Mensagem de {sender} no grupo Telegram interno:\n\n{msg['text']}"
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -1894,6 +2090,22 @@ def webhook_telegram():
     attachment_type, attachment_file_id = _extrai_anexo(message)
     nome_completo = (str(sender.get("first_name") or "") + " " + str(sender.get("last_name") or "")).strip()
 
+    # Se o socio respondeu a uma mensagem do bot, descobre a thread root
+    # (a primeira mensagem do socio que iniciou a conversa).
+    reply_to = message.get("reply_to_message") or {}
+    thread_root_id = None
+    if reply_to and (reply_to.get("from") or {}).get("is_bot"):
+        bot_msg_telegram_id = reply_to.get("message_id")
+        try:
+            bot_row = supabase.table("mensagens_socios").select("replied_to_telegram_message_id") \
+                .eq("telegram_chat_id", chat_id) \
+                .eq("telegram_message_id", bot_msg_telegram_id) \
+                .eq("from_bot", True).limit(1).execute()
+            if bot_row.data:
+                thread_root_id = bot_row.data[0].get("replied_to_telegram_message_id")
+        except Exception as e:
+            print(f"webhook_telegram: erro lookup thread root: {e}")
+
     registro = {
         "telegram_message_id": message_id,
         "telegram_chat_id": chat_id,
@@ -1904,7 +2116,8 @@ def webhook_telegram():
         "attachment_type": attachment_type,
         "attachment_file_id": attachment_file_id,
         "raw_payload": update,
-        "status": "inbox"
+        "status": "inbox",
+        "replied_to_telegram_message_id": thread_root_id
     }
 
     try:
@@ -1935,10 +2148,13 @@ def api_mensagens_socios():
     if not supabase:
         return jsonify([])
     status_filter = request.args.get("status")
+    include_bot = request.args.get("include_bot") == "1"
     try:
         query = supabase.table("mensagens_socios").select("*").order("created_at", desc=True).limit(200)
         if status_filter:
             query = query.eq("status", status_filter)
+        if not include_bot:
+            query = query.eq("from_bot", False)
         result = query.execute()
         return jsonify(result.data or [])
     except Exception as e:
