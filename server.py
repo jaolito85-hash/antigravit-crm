@@ -2136,6 +2136,35 @@ def webhook_telegram():
         except Exception as e:
             print(f"webhook_telegram: erro lookup thread root: {e}")
 
+    # Heuristica de continuacao implicita: se o socio nao deu reply explicito mas
+    # o bot fez uma pergunta nos ultimos 60 min sem resposta, considera essa mensagem
+    # como continuacao dessa thread. Resolve o caso comum do socio mandar
+    # mensagem normal em vez de "reply" no Telegram.
+    if thread_root_id is None and supabase:
+        try:
+            cutoff = (datetime.now() - timedelta(minutes=60)).isoformat()
+            recent = supabase.table("mensagens_socios").select("telegram_message_id, ai_actions_taken, created_at") \
+                .eq("telegram_chat_id", chat_id) \
+                .eq("from_bot", False) \
+                .eq("ai_status", "processed") \
+                .eq("status", "inbox") \
+                .gte("created_at", cutoff) \
+                .order("created_at", desc=True) \
+                .limit(5).execute()
+            for r in (recent.data or []):
+                acts = r.get("ai_actions_taken") or []
+                pediu_resposta = any(
+                    isinstance(a, dict) and a.get("action") == "perguntar_no_telegram"
+                    and (a.get("result") or {}).get("ok")
+                    for a in acts
+                )
+                if pediu_resposta and r.get("telegram_message_id"):
+                    thread_root_id = r["telegram_message_id"]
+                    print(f"🧵 Continuacao implicita: msg {_mascara_id(message_id)} → thread {_mascara_id(thread_root_id)}")
+                    break
+        except Exception as e:
+            print(f"webhook_telegram: erro continuacao implicita: {e}")
+
     registro = {
         "telegram_message_id": message_id,
         "telegram_chat_id": chat_id,
