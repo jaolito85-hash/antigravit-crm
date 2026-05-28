@@ -348,6 +348,20 @@ def api_stats():
         contratos_ativos = sum(1 for c in (contratos.data or []) if c.get("status") == "ativo")
         receita_contratos = sum(float(c.get("valor", 0)) for c in (contratos.data or []) if c.get("status") == "ativo")
 
+        # Resultado financeiro do mês corrente (receitas recebidas − despesas pagas)
+        mes_atual = now.strftime("%Y-%m")
+        receitas = supabase.table("receitas").select("valor, data, status").execute()
+        receitas_mes = sum(
+            float(r.get("valor", 0)) for r in (receitas.data or [])
+            if r.get("status") != "cancelado" and (r.get("data") or "")[:7] == mes_atual
+        )
+        despesas = supabase.table("despesas").select("valor, data, status").execute()
+        despesas_mes = sum(
+            float(d.get("valor", 0)) for d in (despesas.data or [])
+            if d.get("status") != "cancelado" and (d.get("data") or "")[:7] == mes_atual
+        )
+        lucro_mes = receitas_mes - despesas_mes
+
         return jsonify({
             "total_leads": total,
             "leads_by_status": by_status,
@@ -357,7 +371,10 @@ def api_stats():
             "pending_tasks": pending_tasks,
             "overdue_tasks": overdue,
             "contratos_ativos": contratos_ativos,
-            "receita_contratos": receita_contratos
+            "receita_contratos": receita_contratos,
+            "receitas_mes": receitas_mes,
+            "despesas_mes": despesas_mes,
+            "lucro_mes": lucro_mes
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -851,6 +868,68 @@ def api_delete_despesa(despesa_id):
 
 
 # ============================================================
+# API: RECEITAS
+# ============================================================
+
+@app.route("/api/receitas")
+@login_required
+def api_receitas():
+    if not supabase:
+        return jsonify([])
+    try:
+        result = supabase.table("receitas").select(
+            "*, categorias_financeiras(nome, cor, icone), fornecedores(nome), contas_bancarias(nome), leads(nome)"
+        ).order("data", desc=True).execute()
+        return jsonify(result.data or [])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/receitas", methods=["POST"])
+@login_required
+@role_can_write
+def api_create_receita():
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    data = request.json
+    try:
+        result = supabase.table("receitas").insert(data).execute()
+        audit("create", "receitas", result.data[0]["id"] if result.data else None, f"Receita: {data.get('descricao')}")
+        return jsonify(result.data[0] if result.data else {}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/receitas/<receita_id>", methods=["PATCH"])
+@login_required
+@role_can_write
+def api_update_receita(receita_id):
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    data = request.json
+    try:
+        result = supabase.table("receitas").update(data).eq("id", receita_id).execute()
+        audit("update", "receitas", receita_id, f"Editou receita: {data.get('descricao', '')}")
+        return jsonify(result.data[0] if result.data else {}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/receitas/<receita_id>", methods=["DELETE"])
+@login_required
+@role_can_write
+def api_delete_receita(receita_id):
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    try:
+        supabase.table("receitas").delete().eq("id", receita_id).execute()
+        audit("delete", "receitas", receita_id)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
 # API: FORNECEDORES / CONTAS / CATEGORIAS (cadastros financeiros)
 # ============================================================
 
@@ -972,6 +1051,42 @@ def api_update_categoria_fin(row_id):
 @role_can_write
 def api_delete_categoria_fin(row_id):
     return _crud_delete("categorias_financeiras", row_id)
+
+
+# ============================================================
+# API: EMPRÉSTIMOS (dinheiro que a empresa tomou)
+# ============================================================
+
+@app.route("/api/emprestimos")
+@login_required
+def api_emprestimos():
+    if not supabase:
+        return jsonify([])
+    try:
+        result = supabase.table("emprestimos").select(
+            "*, fornecedores(nome), contas_bancarias(nome)"
+        ).order("data_recebimento", desc=True).execute()
+        return jsonify(result.data or [])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/emprestimos", methods=["POST"])
+@login_required
+@role_can_write
+def api_create_emprestimo():
+    return _crud_create("emprestimos", label_field="descricao")
+
+@app.route("/api/emprestimos/<row_id>", methods=["PATCH"])
+@login_required
+@role_can_write
+def api_update_emprestimo(row_id):
+    return _crud_update("emprestimos", row_id)
+
+@app.route("/api/emprestimos/<row_id>", methods=["DELETE"])
+@login_required
+@role_can_write
+def api_delete_emprestimo(row_id):
+    return _crud_delete("emprestimos", row_id)
 
 
 # ============================================================

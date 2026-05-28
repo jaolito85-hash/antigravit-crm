@@ -881,7 +881,9 @@
             <div class="nav-section">Comercial</div>
             <div class="nav-item" data-view="contratos"><i class="ri-file-shield-2-line"></i>Contratos</div>
             <div class="nav-item" data-view="documentos"><i class="ri-folder-2-line"></i>Documentos</div>
+            <div class="nav-item" data-view="receitas"><i class="ri-arrow-up-circle-line"></i>Receitas</div>
             <div class="nav-item" data-view="despesas"><i class="ri-money-dollar-circle-line"></i>Despesas</div>
+            <div class="nav-item" data-view="emprestimos"><i class="ri-hand-coin-line"></i>Empréstimos</div>
             <div class="nav-item" data-view="fornecedores"><i class="ri-truck-line"></i>Fornecedores</div>
             <div class="nav-item" data-view="contas"><i class="ri-bank-line"></i>Contas</div>
             <div class="nav-item" data-view="categorias"><i class="ri-price-tag-3-line"></i>Categorias</div>
@@ -1146,6 +1148,79 @@
             </div>
         </div>
 
+        <!-- ===== RECEITAS ===== -->
+        <div class="view" id="view-receitas">
+            <div class="page-header">
+                <div>
+                    <h1>Receitas</h1>
+                    <p>Entradas e faturamento da empresa</p>
+                </div><button class="btn btn-primary" onclick="openModal('receita')"><i class="ri-add-line"></i>Nova
+                    Receita</button>
+            </div>
+            <div class="stats-grid" id="receitas-stats"></div>
+            <div class="card" id="receitas-breakdown-card" style="display:none">
+                <div class="card-header"><h3>Receitas por Categoria</h3></div>
+                <div class="card-body" style="padding:16px 20px" id="receitas-breakdown"></div>
+            </div>
+            <div class="tabs" id="receitas-tabs">
+                <button class="tab active" onclick="filterReceitas('all',this)">Todas</button>
+                <button class="tab" onclick="filterReceitas('a_receber',this)">A receber</button>
+                <button class="tab" onclick="filterReceitas('atrasado',this)">Atrasadas</button>
+                <button class="tab" onclick="filterReceitas('recebido',this)">Recebidas</button>
+            </div>
+            <div class="card">
+                <div class="card-body">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Descrição</th>
+                                <th>Categoria</th>
+                                <th>Cliente</th>
+                                <th>Status</th>
+                                <th>Recebimento</th>
+                                <th>Valor</th>
+                                <th>Anexo</th>
+                                <th>Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="receitas-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== EMPRÉSTIMOS ===== -->
+        <div class="view" id="view-emprestimos">
+            <div class="page-header">
+                <div>
+                    <h1>Empréstimos</h1>
+                    <p>Dinheiro que a empresa tomou — principal, juros e saldo devedor</p>
+                </div><button class="btn btn-primary" onclick="openModal('emprestimo')"><i class="ri-add-line"></i>Novo
+                    Empréstimo</button>
+            </div>
+            <div class="stats-grid" id="emprestimos-stats"></div>
+            <div class="card">
+                <div class="card-body">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Descrição</th>
+                                <th>Credor</th>
+                                <th>Recebido em</th>
+                                <th>Principal</th>
+                                <th>Juros</th>
+                                <th>Total a pagar</th>
+                                <th>Saldo devedor</th>
+                                <th>Status</th>
+                                <th>Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="emprestimos-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- ===== FORNECEDORES ===== -->
         <div class="view" id="view-fornecedores">
             <div class="page-header">
@@ -1322,7 +1397,8 @@
 
         let leadsCache = [], verticaisCache = [], contratosCache = [], despesasCache = [];
         let categoriasFinCache = [], fornecedoresCache = [], contasCache = [];
-        let despesaFilter = 'all';
+        let receitasCache = [], emprestimosCache = [];
+        let despesaFilter = 'all', receitaFilter = 'all';
         const DESPESA_STATUS = {
             pago: { label: 'Pago', color: '#10b981' },
             a_pagar: { label: 'A pagar', color: '#3b82f6' },
@@ -1332,6 +1408,18 @@
         const FORMA_PAGAMENTO = {
             pix: 'PIX', boleto: 'Boleto', cartao_credito: 'Cartão crédito', cartao_debito: 'Cartão débito',
             dinheiro: 'Dinheiro', transferencia: 'Transferência', debito_automatico: 'Débito automático', outro: 'Outro',
+        };
+        const RECEITA_STATUS = {
+            recebido: { label: 'Recebido', color: '#10b981' },
+            a_receber: { label: 'A receber', color: '#3b82f6' },
+            atrasado: { label: 'Atrasado', color: '#ef4444' },
+            cancelado: { label: 'Cancelado', color: '#94a3b8' },
+        };
+        const EMPRESTIMO_STATUS = {
+            em_aberto: { label: 'Em aberto', color: '#3b82f6' },
+            quitado: { label: 'Quitado', color: '#10b981' },
+            atrasado: { label: 'Atrasado', color: '#ef4444' },
+            cancelado: { label: 'Cancelado', color: '#94a3b8' },
         };
 
         async function api(url, opts = {}) {
@@ -1362,7 +1450,9 @@
             else if (v === 'contratos') await loadContratos();
             else if (v === 'documentos') await loadDocumentos();
             else if (v === 'doc-empresa') await loadDocEmpresa();
+            else if (v === 'receitas') await loadReceitas();
             else if (v === 'despesas') await loadDespesas();
+            else if (v === 'emprestimos') await loadEmprestimos();
             else if (v === 'fornecedores') await loadFornecedores();
             else if (v === 'contas') await loadContas();
             else if (v === 'categorias') await loadCategorias();
@@ -1381,6 +1471,9 @@
         <div class="stat-card"><div class="stat-label">MRR Potencial</div><div class="stat-value green">${fmt(stats.mrr)}</div><div class="stat-sub">Valor mensal dos leads</div></div>
         <div class="stat-card"><div class="stat-label">Contratos Ativos</div><div class="stat-value">${stats.contratos_ativos || 0}</div><div class="stat-sub">${fmt(stats.receita_contratos)} em contratos</div></div>
         <div class="stat-card"><div class="stat-label">Tarefas Pendentes</div><div class="stat-value ${stats.overdue_tasks > 0 ? 'red' : 'yellow'}">${stats.pending_tasks || 0}</div><div class="stat-sub">${stats.overdue_tasks || 0} atrasadas</div></div>
+        <div class="stat-card"><div class="stat-label">Receitas (mês)</div><div class="stat-value green">${fmt(stats.receitas_mes)}</div><div class="stat-sub">recebido este mês</div></div>
+        <div class="stat-card"><div class="stat-label">Despesas (mês)</div><div class="stat-value red">${fmt(stats.despesas_mes)}</div><div class="stat-sub">gasto este mês</div></div>
+        <div class="stat-card"><div class="stat-label">Resultado (mês)</div><div class="stat-value ${(stats.lucro_mes || 0) >= 0 ? 'green' : 'red'}">${fmt(stats.lucro_mes)}</div><div class="stat-sub">receitas − despesas</div></div>
     `;
             document.getElementById('pipeline-body').innerHTML = leads.slice(0, 15).map(l => `<tr>
         <td><strong>${l.nome || '—'}</strong></td>
@@ -2450,6 +2543,352 @@
             document.getElementById('modal-overlay').classList.add('active');
         }
 
+        // ===== RECEITAS =====
+        function recAtrasada(r) {
+            return r.status === 'atrasado' || (r.status === 'a_receber' && r.data_recebimento && r.data_recebimento < hojeISO());
+        }
+
+        async function loadReceitas() {
+            const [rec, cats, contas, leads] = await Promise.all([
+                api('/api/receitas'),
+                api('/api/categorias-financeiras'),
+                api('/api/contas'),
+                api('/api/leads'),
+            ]);
+            receitasCache = rec || [];
+            categoriasFinCache = (cats || []).filter(c => c.tipo === 'receita');
+            contasCache = (contas || []).filter(c => c.ativo !== false);
+            leadsCache = leads || leadsCache;
+
+            const now = new Date();
+            const ativas = receitasCache.filter(r => r.status !== 'cancelado');
+            const recebidoMes = receitasCache.filter(r => r.status === 'recebido' && r.data && new Date(r.data + 'T12:00:00').getMonth() === now.getMonth() && new Date(r.data + 'T12:00:00').getFullYear() === now.getFullYear())
+                .reduce((s, r) => s + parseFloat(r.valor || 0), 0);
+            const aReceber = receitasCache.filter(r => r.status === 'a_receber' || r.status === 'atrasado').reduce((s, r) => s + parseFloat(r.valor || 0), 0);
+            const atrasadas = receitasCache.filter(recAtrasada);
+
+            document.getElementById('receitas-stats').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Recebido este mês</div><div class="stat-value green">${fmt(recebidoMes)}</div><div class="stat-sub">${now.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</div></div>
+        <div class="stat-card"><div class="stat-label">A receber</div><div class="stat-value blue">${fmt(aReceber)}</div><div class="stat-sub">${receitasCache.filter(r => r.status === 'a_receber' || r.status === 'atrasado').length} em aberto</div></div>
+        <div class="stat-card"><div class="stat-label">Atrasadas</div><div class="stat-value ${atrasadas.length ? 'red' : ''}">${fmt(atrasadas.reduce((s, r) => s + parseFloat(r.valor || 0), 0))}</div><div class="stat-sub">${atrasadas.length} vencidas</div></div>
+        <div class="stat-card"><div class="stat-label">Total de Lançamentos</div><div class="stat-value blue">${receitasCache.length}</div><div class="stat-sub">registros</div></div>`;
+
+            const breakdownCard = document.getElementById('receitas-breakdown-card');
+            const breakdownEl = document.getElementById('receitas-breakdown');
+            const porCat = {};
+            ativas.forEach(r => {
+                const nome = r.categorias_financeiras?.nome || 'Sem categoria';
+                if (!porCat[nome]) porCat[nome] = { total: 0, cor: r.categorias_financeiras?.cor || '#94a3b8', icone: r.categorias_financeiras?.icone || '' };
+                porCat[nome].total += parseFloat(r.valor || 0);
+            });
+            const entradas = Object.entries(porCat).sort((a, b) => b[1].total - a[1].total);
+            const totalGeral = entradas.reduce((s, [, v]) => s + v.total, 0);
+            if (entradas.length) {
+                breakdownCard.style.display = '';
+                breakdownEl.innerHTML = entradas.map(([nome, v]) => {
+                    const pct = totalGeral ? (v.total / totalGeral * 100) : 0;
+                    return `<div style="margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>${v.icone} ${nome}</span><span>${fmt(v.total)} <span style="color:var(--text2)">(${pct.toFixed(1)}%)</span></span></div>
+            <div style="height:6px;background:var(--border);border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${v.cor}"></div></div>
+        </div>`;
+                }).join('');
+            } else { breakdownCard.style.display = 'none'; }
+
+            renderReceitas();
+        }
+
+        function renderReceitas() {
+            let filtered = receitasCache;
+            if (receitaFilter === 'a_receber') filtered = receitasCache.filter(r => r.status === 'a_receber' || r.status === 'atrasado');
+            else if (receitaFilter === 'atrasado') filtered = receitasCache.filter(recAtrasada);
+            else if (receitaFilter === 'recebido') filtered = receitasCache.filter(r => r.status === 'recebido');
+
+            document.getElementById('receitas-body').innerHTML = filtered.map(r => {
+                const st = RECEITA_STATUS[r.status] || RECEITA_STATUS.recebido;
+                const cat = r.categorias_financeiras;
+                const anexos = [];
+                if (r.comprovante_url) anexos.push(`<a href="${fileUrl(r.comprovante_url)}" target="_blank" title="Comprovante" style="color:var(--primary)"><i class="ri-receipt-line"></i></a>`);
+                return `<tr class="clickable" onclick="openReceitaDetail('${r.id}')">
+        <td><strong>${r.descricao || '—'}</strong></td>
+        <td>${cat ? '<span style="color:' + (cat.cor || '#888') + '">' + (cat.icone || '') + ' ' + cat.nome + '</span>' : '—'}</td>
+        <td>${r.leads?.nome || '—'}</td>
+        <td><span class="badge" style="background:${st.color}22;color:${st.color}">${st.label}</span></td>
+        <td>${r.data_recebimento ? fmtDate(r.data_recebimento) : '—'}</td>
+        <td style="color:var(--green);font-weight:600">${fmt(r.valor)}</td>
+        <td onclick="event.stopPropagation()">${anexos.join(' ') || '—'}</td>
+        <td onclick="event.stopPropagation()"><div class="actions">
+            <button class="btn-icon" onclick="editReceita('${r.id}')" title="Editar"><i class="ri-edit-line"></i></button>
+            <button class="btn-icon danger" onclick="deleteReceita('${r.id}','${(r.descricao || '').replace(/'/g, '')}')" title="Excluir"><i class="ri-delete-bin-line"></i></button>
+        </div></td></tr>`;
+            }).join('') || '<tr><td colspan="8" style="text-align:center;color:#555;padding:30px">Nenhuma receita encontrada</td></tr>';
+        }
+
+        function filterReceitas(cat, btn) {
+            receitaFilter = cat;
+            document.querySelectorAll('#receitas-tabs .tab').forEach(t => t.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+            renderReceitas();
+        }
+
+        function openReceitaDetail(id) {
+            const r = receitasCache.find(x => x.id === id);
+            if (!r) return;
+            const st = RECEITA_STATUS[r.status] || RECEITA_STATUS.recebido;
+            const el = document.getElementById('modal-content');
+            el.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:20px">
+            <div>
+                <h3 style="margin-bottom:4px">${r.descricao || '—'}</h3>
+                <span style="font-size:12px;color:var(--text2)">${fmtDate(r.data)}</span>
+            </div>
+            <button class="btn btn-sm btn-ghost" onclick="closeModal()">Fechar</button>
+        </div>
+        <div style="text-align:center;padding:20px 0 24px;border-bottom:1px solid var(--border);margin-bottom:20px">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:8px">Valor da Receita</div>
+            <div style="font-size:36px;font-weight:700;color:var(--green);letter-spacing:-1px">${fmt(r.valor)}</div>
+        </div>
+        <div class="lead-detail">
+            <div class="field"><div class="field-label">Categoria</div><div class="field-value">${r.categorias_financeiras ? (r.categorias_financeiras.icone || '') + ' ' + r.categorias_financeiras.nome : '—'}</div></div>
+            <div class="field"><div class="field-label">Status</div><div class="field-value"><span class="badge" style="background:${st.color}22;color:${st.color}">${st.label}</span></div></div>
+            <div class="field"><div class="field-label">Cliente</div><div class="field-value">${r.leads?.nome || '—'}</div></div>
+            <div class="field"><div class="field-label">Conta / Destino</div><div class="field-value">${r.contas_bancarias?.nome || '—'}</div></div>
+            <div class="field"><div class="field-label">Competência</div><div class="field-value">${fmtDate(r.data)}</div></div>
+            <div class="field"><div class="field-label">Recebimento</div><div class="field-value">${r.data_recebimento ? fmtDate(r.data_recebimento) : '—'}</div></div>
+            <div class="field"><div class="field-label">Forma de pagamento</div><div class="field-value">${FORMA_PAGAMENTO[r.forma_pagamento] || '—'}</div></div>
+            ${r.notas ? '<div class="field full"><div class="field-label">Notas</div><div class="field-value" style="white-space:pre-wrap">' + r.notas + '</div></div>' : ''}
+        </div>
+        ${r.comprovante_url ? `<div style="margin-top:16px"><a class="btn btn-ghost btn-sm" href="${fileUrl(r.comprovante_url)}" target="_blank"><i class="ri-receipt-line"></i> Ver comprovante</a></div>` : ''}
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between">
+            <button class="btn btn-primary" onclick="editReceita('${r.id}')"><i class="ri-edit-line"></i> Editar</button>
+            <button class="btn btn-danger" onclick="deleteReceita('${r.id}','${(r.descricao || '').replace(/'/g, '')}');closeModal()"><i class="ri-delete-bin-line"></i> Excluir receita</button>
+        </div>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function modalReceita() { return receitaForm(null); }
+
+        function editReceita(id) {
+            const r = receitasCache.find(x => x.id === id);
+            if (!r) return;
+            document.getElementById('modal-content').innerHTML = receitaForm(r);
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function receitaForm(r) {
+            r = r || {};
+            const sel = (v, val) => v == val ? 'selected' : '';
+            const esc = s => (s || '').toString().replace(/"/g, '&quot;');
+            const catOpts = categoriasFinCache.map(c => `<option value="${c.id}" ${sel(c.id, r.categoria_id)}>${c.icone || ''} ${c.nome}</option>`).join('');
+            const contaOpts = contasCache.map(c => `<option value="${c.id}" ${sel(c.id, r.conta_id)}>${c.nome}</option>`).join('');
+            const leadOpts = leadsCache.map(l => `<option value="${l.id}" ${sel(l.id, r.lead_id)}>${l.nome}</option>`).join('');
+            const statusOpts = Object.entries(RECEITA_STATUS).map(([k, v]) => `<option value="${k}" ${sel(k, r.status || 'recebido')}>${v.label}</option>`).join('');
+            const fpOpts = '<option value="">—</option>' + Object.entries(FORMA_PAGAMENTO).map(([k, v]) => `<option value="${k}" ${sel(k, r.forma_pagamento)}>${v}</option>`).join('');
+            const isEdit = !!r.id;
+            return `<h3>${isEdit ? 'Editar' : 'Nova'} Receita</h3><form onsubmit="saveReceita(event${isEdit ? ",'" + r.id + "'" : ''})">
+    <div class="form-group"><label>Descrição *</label><input name="descricao" required value="${esc(r.descricao)}"></div>
+    <div class="form-row"><div class="form-group"><label>Categoria</label><select name="categoria_id">${catOpts || '<option value="">— cadastre categorias de receita —</option>'}</select></div><div class="form-group"><label>Valor (R$) *</label><input name="valor" type="number" step="0.01" required value="${r.valor || ''}"></div></div>
+    <div class="form-row"><div class="form-group"><label>Status</label><select name="status">${statusOpts}</select></div><div class="form-group"><label>Forma de recebimento</label><select name="forma_pagamento">${fpOpts}</select></div></div>
+    <div class="form-row"><div class="form-group"><label>Competência *</label><input name="data" type="date" required value="${r.data || ''}"></div><div class="form-group"><label>Data de recebimento</label><input name="data_recebimento" type="date" value="${r.data_recebimento || ''}"></div></div>
+    <div class="form-row"><div class="form-group"><label>Cliente</label><select name="lead_id"><option value="">—</option>${leadOpts}</select></div><div class="form-group"><label>Conta / Destino</label><select name="conta_id"><option value="">—</option>${contaOpts}</select></div></div>
+    <div class="form-group"><label>📎 Comprovante ${r.comprovante_url ? '<span style="color:#10b981">(anexado)</span>' : ''}</label><input id="rec-comprovante" type="file" accept="image/*,application/pdf"></div>
+    <div class="form-group"><label>Notas</label><textarea name="notas" rows="2">${esc(r.notas)}</textarea></div>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button id="rec-submit-btn" type="submit" class="btn btn-primary">${isEdit ? 'Atualizar' : 'Salvar'}</button></div></form>`;
+        }
+
+        async function saveReceita(e, id) {
+            e.preventDefault();
+            const f = e.target;
+            const btn = document.getElementById('rec-submit-btn');
+            btn.disabled = true; btn.textContent = 'Salvando...';
+            try {
+                const payload = {
+                    descricao: f.descricao.value,
+                    categoria_id: f.categoria_id.value || null,
+                    valor: parseFloat(f.valor.value) || 0,
+                    status: f.status.value,
+                    forma_pagamento: f.forma_pagamento.value || null,
+                    data: f.data.value,
+                    data_recebimento: f.data_recebimento.value || null,
+                    lead_id: f.lead_id.value || null,
+                    conta_id: f.conta_id.value || null,
+                    notas: f.notas.value || null,
+                };
+                if (payload.status === 'recebido' && !payload.data_recebimento) payload.data_recebimento = payload.data;
+                btn.textContent = 'Enviando anexo...';
+                const comp = await uploadDespesaFile('rec-comprovante');
+                if (comp) payload.comprovante_url = comp;
+                btn.textContent = 'Salvando...';
+                if (id) await api('/api/receitas/' + id, { method: 'PATCH', body: payload });
+                else await api('/api/receitas', { method: 'POST', body: payload });
+                closeModal(); loadReceitas();
+            } catch (err) {
+                alert('Erro ao salvar: ' + err.message);
+                btn.disabled = false; btn.textContent = id ? 'Atualizar' : 'Salvar';
+            }
+        }
+
+        async function deleteReceita(id, descricao) {
+            if (!confirm(`Excluir receita "${descricao}"? Esta ação não pode ser desfeita.`)) return;
+            await api('/api/receitas/' + id, { method: 'DELETE' });
+            loadReceitas();
+        }
+
+        // ===== EMPRÉSTIMOS (dinheiro que a empresa tomou) =====
+        function empSaldo(em) { return Math.max(0, parseFloat(em.valor_total || em.valor_principal || 0) - parseFloat(em.valor_pago || 0)); }
+        function empJuros(em) { return Math.max(0, parseFloat(em.valor_total || 0) - parseFloat(em.valor_principal || 0)); }
+
+        async function loadEmprestimos() {
+            const [emps, forns, contas] = await Promise.all([
+                api('/api/emprestimos'),
+                api('/api/fornecedores'),
+                api('/api/contas'),
+            ]);
+            emprestimosCache = emps || [];
+            fornecedoresCache = (forns || []).filter(c => c.ativo !== false);
+            contasCache = (contas || []).filter(c => c.ativo !== false);
+
+            const ativos = emprestimosCache.filter(em => em.status !== 'cancelado');
+            const totalTomado = ativos.reduce((s, em) => s + parseFloat(em.valor_principal || 0), 0);
+            const saldoTotal = ativos.filter(em => em.status !== 'quitado').reduce((s, em) => s + empSaldo(em), 0);
+            const jurosTotal = ativos.reduce((s, em) => s + empJuros(em), 0);
+
+            document.getElementById('emprestimos-stats').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Total Tomado</div><div class="stat-value blue">${fmt(totalTomado)}</div><div class="stat-sub">principal recebido</div></div>
+        <div class="stat-card"><div class="stat-label">Saldo Devedor</div><div class="stat-value ${saldoTotal > 0 ? 'red' : 'green'}">${fmt(saldoTotal)}</div><div class="stat-sub">${ativos.filter(em => em.status !== 'quitado').length} em aberto</div></div>
+        <div class="stat-card"><div class="stat-label">Juros a Pagar</div><div class="stat-value yellow">${fmt(jurosTotal)}</div><div class="stat-sub">custo do crédito</div></div>
+        <div class="stat-card"><div class="stat-label">Empréstimos</div><div class="stat-value blue">${emprestimosCache.length}</div><div class="stat-sub">registros</div></div>`;
+
+            renderEmprestimos();
+        }
+
+        function renderEmprestimos() {
+            document.getElementById('emprestimos-body').innerHTML = emprestimosCache.map(em => {
+                const st = EMPRESTIMO_STATUS[em.status] || EMPRESTIMO_STATUS.em_aberto;
+                return `<tr class="clickable" onclick="openEmprestimoDetail('${em.id}')">
+        <td><strong>${em.descricao || '—'}</strong></td>
+        <td>${em.credor || em.fornecedores?.nome || '—'}</td>
+        <td>${fmtDate(em.data_recebimento)}</td>
+        <td>${fmt(em.valor_principal)}</td>
+        <td style="color:var(--yellow,#eab308)">${fmt(empJuros(em))}</td>
+        <td>${fmt(em.valor_total || em.valor_principal)}</td>
+        <td style="color:${empSaldo(em) > 0 ? 'var(--red)' : 'var(--green)'};font-weight:600">${fmt(empSaldo(em))}</td>
+        <td><span class="badge" style="background:${st.color}22;color:${st.color}">${st.label}</span></td>
+        <td onclick="event.stopPropagation()"><div class="actions">
+            <button class="btn-icon" onclick="editEmprestimo('${em.id}')" title="Editar"><i class="ri-edit-line"></i></button>
+            <button class="btn-icon danger" onclick="deleteEmprestimo('${em.id}','${(em.descricao || '').replace(/'/g, '')}')" title="Excluir"><i class="ri-delete-bin-line"></i></button>
+        </div></td></tr>`;
+            }).join('') || '<tr><td colspan="9" style="text-align:center;color:#555;padding:30px">Nenhum empréstimo registrado</td></tr>';
+        }
+
+        function openEmprestimoDetail(id) {
+            const em = emprestimosCache.find(x => x.id === id);
+            if (!em) return;
+            const st = EMPRESTIMO_STATUS[em.status] || EMPRESTIMO_STATUS.em_aberto;
+            const el = document.getElementById('modal-content');
+            el.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:20px">
+            <div>
+                <h3 style="margin-bottom:4px">${em.descricao || '—'}</h3>
+                <span style="font-size:12px;color:var(--text2)">${em.credor || em.fornecedores?.nome || ''} • recebido em ${fmtDate(em.data_recebimento)}</span>
+            </div>
+            <button class="btn btn-sm btn-ghost" onclick="closeModal()">Fechar</button>
+        </div>
+        <div style="text-align:center;padding:20px 0 24px;border-bottom:1px solid var(--border);margin-bottom:20px">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:8px">Saldo Devedor</div>
+            <div style="font-size:36px;font-weight:700;color:${empSaldo(em) > 0 ? 'var(--red)' : 'var(--green)'};letter-spacing:-1px">${fmt(empSaldo(em))}</div>
+        </div>
+        <div class="lead-detail">
+            <div class="field"><div class="field-label">Status</div><div class="field-value"><span class="badge" style="background:${st.color}22;color:${st.color}">${st.label}</span></div></div>
+            <div class="field"><div class="field-label">Credor</div><div class="field-value">${em.credor || em.fornecedores?.nome || '—'}</div></div>
+            <div class="field"><div class="field-label">Valor recebido (principal)</div><div class="field-value">${fmt(em.valor_principal)}</div></div>
+            <div class="field"><div class="field-label">Total a pagar</div><div class="field-value">${fmt(em.valor_total || em.valor_principal)}</div></div>
+            <div class="field"><div class="field-label">Juros totais</div><div class="field-value">${fmt(empJuros(em))}</div></div>
+            <div class="field"><div class="field-label">Taxa de juros</div><div class="field-value">${em.taxa_juros ? em.taxa_juros + '% ' + (em.tipo_juros || '') : '—'}</div></div>
+            <div class="field"><div class="field-label">Parcelas</div><div class="field-value">${em.num_parcelas || 1}x de ${fmt(em.valor_parcela)}</div></div>
+            <div class="field"><div class="field-label">Já pago</div><div class="field-value">${fmt(em.valor_pago)}</div></div>
+            <div class="field"><div class="field-label">Recebido em</div><div class="field-value">${fmtDate(em.data_recebimento)}</div></div>
+            <div class="field"><div class="field-label">1ª parcela</div><div class="field-value">${em.data_primeira_parcela ? fmtDate(em.data_primeira_parcela) : '—'}</div></div>
+            <div class="field"><div class="field-label">Conta / Destino</div><div class="field-value">${em.contas_bancarias?.nome || '—'}</div></div>
+            ${em.notas ? '<div class="field full"><div class="field-label">Notas</div><div class="field-value" style="white-space:pre-wrap">' + em.notas + '</div></div>' : ''}
+        </div>
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between">
+            <button class="btn btn-primary" onclick="editEmprestimo('${em.id}')"><i class="ri-edit-line"></i> Editar</button>
+            <button class="btn btn-danger" onclick="deleteEmprestimo('${em.id}','${(em.descricao || '').replace(/'/g, '')}');closeModal()"><i class="ri-delete-bin-line"></i> Excluir empréstimo</button>
+        </div>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function modalEmprestimo() { return emprestimoForm(null); }
+
+        function editEmprestimo(id) {
+            const em = emprestimosCache.find(x => x.id === id);
+            if (!em) return;
+            document.getElementById('modal-content').innerHTML = emprestimoForm(em);
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function emprestimoForm(em) {
+            em = em || {};
+            const sel = (v, val) => v == val ? 'selected' : '';
+            const esc = s => (s || '').toString().replace(/"/g, '&quot;');
+            const fornOpts = fornecedoresCache.map(f => `<option value="${f.id}" ${sel(f.id, em.fornecedor_id)}>${f.nome}</option>`).join('');
+            const contaOpts = contasCache.map(c => `<option value="${c.id}" ${sel(c.id, em.conta_id)}>${c.nome}</option>`).join('');
+            const statusOpts = Object.entries(EMPRESTIMO_STATUS).map(([k, v]) => `<option value="${k}" ${sel(k, em.status || 'em_aberto')}>${v.label}</option>`).join('');
+            const tjOpts = ['mensal', 'anual'].map(p => `<option value="${p}" ${sel(p, em.tipo_juros || 'mensal')}>${p[0].toUpperCase() + p.slice(1)}</option>`).join('');
+            const isEdit = !!em.id;
+            return `<h3>${isEdit ? 'Editar' : 'Novo'} Empréstimo</h3><form onsubmit="saveEmprestimo(event${isEdit ? ",'" + em.id + "'" : ''})">
+    <div class="form-group"><label>Descrição *</label><input name="descricao" required value="${esc(em.descricao)}" placeholder="Ex: Capital de giro Banco X"></div>
+    <div class="form-row"><div class="form-group"><label>Credor (de quem)</label><input name="credor" value="${esc(em.credor)}" placeholder="Banco, sócio..."></div><div class="form-group"><label>Fornecedor vinculado</label><select name="fornecedor_id"><option value="">—</option>${fornOpts}</select></div></div>
+    <div class="form-row"><div class="form-group"><label>Valor recebido (R$) *</label><input name="valor_principal" type="number" step="0.01" required value="${em.valor_principal || ''}"></div><div class="form-group"><label>Dia que recebeu *</label><input name="data_recebimento" type="date" required value="${em.data_recebimento || ''}"></div></div>
+    <div class="form-row"><div class="form-group"><label>Taxa de juros (%)</label><input name="taxa_juros" type="number" step="0.01" value="${em.taxa_juros || ''}"></div><div class="form-group"><label>Período dos juros</label><select name="tipo_juros">${tjOpts}</select></div></div>
+    <div class="form-row"><div class="form-group"><label>Total a pagar (R$)</label><input name="valor_total" type="number" step="0.01" value="${em.valor_total || ''}" placeholder="principal + juros"></div><div class="form-group"><label>Nº de parcelas</label><input name="num_parcelas" type="number" min="1" value="${em.num_parcelas || 1}"></div></div>
+    <div class="form-row"><div class="form-group"><label>Valor já pago (R$)</label><input name="valor_pago" type="number" step="0.01" value="${em.valor_pago || ''}"></div><div class="form-group"><label>Status</label><select name="status">${statusOpts}</select></div></div>
+    <div class="form-row"><div class="form-group"><label>1ª parcela</label><input name="data_primeira_parcela" type="date" value="${em.data_primeira_parcela || ''}"></div><div class="form-group"><label>Conta / Destino</label><select name="conta_id"><option value="">—</option>${contaOpts}</select></div></div>
+    <div class="form-group"><label>Notas</label><textarea name="notas" rows="2">${esc(em.notas)}</textarea></div>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button id="emp-submit-btn" type="submit" class="btn btn-primary">${isEdit ? 'Atualizar' : 'Salvar'}</button></div></form>`;
+        }
+
+        async function saveEmprestimo(e, id) {
+            e.preventDefault();
+            const f = e.target;
+            const btn = document.getElementById('emp-submit-btn');
+            btn.disabled = true; btn.textContent = 'Salvando...';
+            try {
+                const principal = parseFloat(f.valor_principal.value) || 0;
+                const total = parseFloat(f.valor_total.value) || principal;
+                const nParc = parseInt(f.num_parcelas.value) || 1;
+                const payload = {
+                    descricao: f.descricao.value,
+                    credor: f.credor.value || null,
+                    fornecedor_id: f.fornecedor_id.value || null,
+                    conta_id: f.conta_id.value || null,
+                    valor_principal: principal,
+                    data_recebimento: f.data_recebimento.value,
+                    taxa_juros: parseFloat(f.taxa_juros.value) || 0,
+                    tipo_juros: f.tipo_juros.value,
+                    num_parcelas: nParc,
+                    valor_total: total,
+                    valor_parcela: nParc > 0 ? Math.round((total / nParc) * 100) / 100 : total,
+                    valor_pago: parseFloat(f.valor_pago.value) || 0,
+                    data_primeira_parcela: f.data_primeira_parcela.value || null,
+                    status: f.status.value,
+                    notas: f.notas.value || null,
+                };
+                if (id) await api('/api/emprestimos/' + id, { method: 'PATCH', body: payload });
+                else await api('/api/emprestimos', { method: 'POST', body: payload });
+                closeModal(); loadEmprestimos();
+            } catch (err) {
+                alert('Erro ao salvar: ' + err.message);
+                btn.disabled = false; btn.textContent = id ? 'Atualizar' : 'Salvar';
+            }
+        }
+
+        async function deleteEmprestimo(id, descricao) {
+            if (!confirm(`Excluir empréstimo "${descricao}"? Esta ação não pode ser desfeita.`)) return;
+            await api('/api/emprestimos/' + id, { method: 'DELETE' });
+            loadEmprestimos();
+        }
+
         // ===== CADASTROS FINANCEIROS (Fornecedores / Contas / Categorias) =====
         let cadData = { fornecedor: [], conta: [], categoria: [] };
         const FORN_TIPOS = { fornecedor: '🏪 Fornecedor', parceiro: '🤝 Parceiro', funcionario: '👤 Funcionário', banco: '🏦 Banco', governo: '🏛️ Governo', outro: '📦 Outro' };
@@ -2743,6 +3182,19 @@
                 fornecedoresCache = (forns || []).filter(c => c.ativo !== false);
                 contasCache = (contas || []).filter(c => c.ativo !== false);
             }
+            if (type === 'receita') {
+                const [cats, contas, leads] = await Promise.all([
+                    api('/api/categorias-financeiras'), api('/api/contas'), api('/api/leads'),
+                ]);
+                categoriasFinCache = (cats || []).filter(c => c.tipo === 'receita');
+                contasCache = (contas || []).filter(c => c.ativo !== false);
+                leadsCache = leads || leadsCache;
+            }
+            if (type === 'emprestimo') {
+                const [forns, contas] = await Promise.all([api('/api/fornecedores'), api('/api/contas')]);
+                fornecedoresCache = (forns || []).filter(c => c.ativo !== false);
+                contasCache = (contas || []).filter(c => c.ativo !== false);
+            }
             const el = document.getElementById('modal-content');
             el.classList.remove('wide', 'xl');
             if (type === 'lead') el.innerHTML = modalLead();
@@ -2750,6 +3202,8 @@
             else if (type === 'contrato') el.innerHTML = modalContrato();
             else if (type === 'documento') el.innerHTML = modalDocumento(extra);
             else if (type === 'despesa') el.innerHTML = modalDespesa();
+            else if (type === 'receita') el.innerHTML = modalReceita();
+            else if (type === 'emprestimo') el.innerHTML = modalEmprestimo();
             else if (type === 'user') el.innerHTML = modalUser();
             document.getElementById('modal-overlay').classList.add('active');
             if (type === 'lead') setupPhoneMask();
