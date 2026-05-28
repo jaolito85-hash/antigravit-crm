@@ -604,11 +604,16 @@ def api_create_documento():
         return jsonify({"error": str(e)}), 500
 
 
+# Buckets de storage permitidos (privados — acesso só via /api/file com URL assinada)
+ALLOWED_BUCKETS = {"documentos", "comprovantes"}
+
+
 @app.route("/api/upload", methods=["POST"])
 @login_required
 @role_can_write
 def api_upload_file():
-    """Upload arquivo para Supabase Storage e retorna URL pública."""
+    """Upload para Supabase Storage (bucket privado). Retorna o caminho interno
+    e uma URL de proxy protegida (/api/file/...), nunca uma URL pública direta."""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return jsonify({"error": "Storage não configurado"}), 503
 
@@ -619,14 +624,17 @@ def api_upload_file():
     if not f.filename:
         return jsonify({"error": "Arquivo sem nome"}), 400
 
-    # Gerar nome único
+    bucket = (request.form.get("bucket") or "documentos").strip()
+    if bucket not in ALLOWED_BUCKETS:
+        return jsonify({"error": "Bucket inválido"}), 400
+
+    # Gerar nome único (organizado por ano)
     import uuid
-    ext = f.filename.rsplit(".", 1)[-1] if "." in f.filename else "bin"
-    safe_name = f"{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}.{ext}"
+    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else "bin"
+    safe_name = f"{datetime.now().year}/{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}.{ext}"
 
     try:
-        # Upload via Supabase Storage REST API
-        upload_url = f"{SUPABASE_URL}/storage/v1/object/documentos/{safe_name}"
+        upload_url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{safe_name}"
         content_type = f.content_type or "application/octet-stream"
         resp = requests.post(
             upload_url,
@@ -642,13 +650,49 @@ def api_upload_file():
         if resp.status_code >= 400:
             return jsonify({"error": f"Erro no upload: {resp.text[:200]}"}), 500
 
-        # URL pública
-        public_url = f"{SUPABASE_URL}/storage/v1/object/public/documentos/{safe_name}"
-        audit("upload", "documentos", None, f"Upload: {f.filename} -> {safe_name}")
-        return jsonify({"url": public_url, "filename": safe_name}), 201
+        audit("upload", bucket, None, f"Upload: {f.filename} -> {safe_name}")
+        # url = rota proxy protegida; path = caminho cru para salvar em colunas dedicadas
+        return jsonify({
+            "url": f"/api/file/{bucket}/{safe_name}",
+            "path": safe_name,
+            "bucket": bucket,
+            "filename": safe_name,
+        }), 201
 
     except Exception as e:
         return jsonify({"error": f"Falha no upload: {str(e)}"}), 500
+
+
+@app.route("/api/file/<bucket>/<path:filename>")
+@login_required
+def api_file_proxy(bucket, filename):
+    """Gera uma URL assinada temporária e redireciona. Só usuários logados
+    no CRM acessam — os buckets são privados no Supabase."""
+    if bucket not in ALLOWED_BUCKETS:
+        return jsonify({"error": "Bucket inválido"}), 404
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"error": "Storage não configurado"}), 503
+    try:
+        sign_url = f"{SUPABASE_URL}/storage/v1/object/sign/{bucket}/{filename}"
+        resp = requests.post(
+            sign_url,
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={"expiresIn": 3600},
+            timeout=15,
+        )
+        if resp.status_code >= 400:
+            return jsonify({"error": f"Arquivo não encontrado: {resp.text[:150]}"}), 404
+        signed = resp.json().get("signedURL") or resp.json().get("signedUrl")
+        if not signed:
+            return jsonify({"error": "Falha ao assinar URL"}), 500
+        # signedURL vem como caminho relativo a /storage/v1
+        return redirect(f"{SUPABASE_URL}/storage/v1{signed}")
+    except Exception as e:
+        return jsonify({"error": f"Falha ao gerar link: {str(e)}"}), 500
 
 
 @app.route("/api/documentos/<doc_id>", methods=["PATCH"])
@@ -754,7 +798,9 @@ def api_despesas():
     if not supabase:
         return jsonify([])
     try:
-        result = supabase.table("despesas").select("*, verticais(nome, icone, codigo)").order("data", desc=True).execute()
+        result = supabase.table("despesas").select(
+            "*, verticais(nome, icone, codigo), categorias_financeiras(nome, cor, icone), fornecedores(nome), contas_bancarias(nome)"
+        ).order("data", desc=True).execute()
         return jsonify(result.data or [])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -775,6 +821,21 @@ def api_create_despesa():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/despesas/<despesa_id>", methods=["PATCH"])
+@login_required
+@role_can_write
+def api_update_despesa(despesa_id):
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    data = request.json
+    try:
+        result = supabase.table("despesas").update(data).eq("id", despesa_id).execute()
+        audit("update", "despesas", despesa_id, f"Editou despesa: {data.get('descricao', '')}")
+        return jsonify(result.data[0] if result.data else {}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/despesas/<despesa_id>", methods=["DELETE"])
 @login_required
 @role_can_write
@@ -787,6 +848,130 @@ def api_delete_despesa(despesa_id):
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
+# API: FORNECEDORES / CONTAS / CATEGORIAS (cadastros financeiros)
+# ============================================================
+
+def _crud_list(table, select="*", order_col="nome", desc=False):
+    if not supabase:
+        return jsonify([])
+    try:
+        result = supabase.table(table).select(select).order(order_col, desc=desc).execute()
+        return jsonify(result.data or [])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def _crud_create(table, label_field="nome"):
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    data = request.json
+    try:
+        result = supabase.table(table).insert(data).execute()
+        audit("create", table, result.data[0]["id"] if result.data else None, f"{table}: {data.get(label_field, '')}")
+        return jsonify(result.data[0] if result.data else {}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def _crud_update(table, row_id):
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    data = request.json
+    try:
+        result = supabase.table(table).update(data).eq("id", row_id).execute()
+        audit("update", table, row_id)
+        return jsonify(result.data[0] if result.data else {}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def _crud_delete(table, row_id):
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    try:
+        supabase.table(table).delete().eq("id", row_id).execute()
+        audit("delete", table, row_id)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- Fornecedores ---
+@app.route("/api/fornecedores")
+@login_required
+def api_fornecedores():
+    return _crud_list("fornecedores")
+
+@app.route("/api/fornecedores", methods=["POST"])
+@login_required
+@role_can_write
+def api_create_fornecedor():
+    return _crud_create("fornecedores")
+
+@app.route("/api/fornecedores/<row_id>", methods=["PATCH"])
+@login_required
+@role_can_write
+def api_update_fornecedor(row_id):
+    return _crud_update("fornecedores", row_id)
+
+@app.route("/api/fornecedores/<row_id>", methods=["DELETE"])
+@login_required
+@role_can_write
+def api_delete_fornecedor(row_id):
+    return _crud_delete("fornecedores", row_id)
+
+
+# --- Contas bancárias ---
+@app.route("/api/contas")
+@login_required
+def api_contas():
+    return _crud_list("contas_bancarias")
+
+@app.route("/api/contas", methods=["POST"])
+@login_required
+@role_can_write
+def api_create_conta():
+    return _crud_create("contas_bancarias")
+
+@app.route("/api/contas/<row_id>", methods=["PATCH"])
+@login_required
+@role_can_write
+def api_update_conta(row_id):
+    return _crud_update("contas_bancarias", row_id)
+
+@app.route("/api/contas/<row_id>", methods=["DELETE"])
+@login_required
+@role_can_write
+def api_delete_conta(row_id):
+    return _crud_delete("contas_bancarias", row_id)
+
+
+# --- Categorias financeiras (plano de contas) ---
+@app.route("/api/categorias-financeiras")
+@login_required
+def api_categorias_fin():
+    return _crud_list("categorias_financeiras", order_col="tipo")
+
+@app.route("/api/categorias-financeiras", methods=["POST"])
+@login_required
+@role_can_write
+def api_create_categoria_fin():
+    return _crud_create("categorias_financeiras")
+
+@app.route("/api/categorias-financeiras/<row_id>", methods=["PATCH"])
+@login_required
+@role_can_write
+def api_update_categoria_fin(row_id):
+    return _crud_update("categorias_financeiras", row_id)
+
+@app.route("/api/categorias-financeiras/<row_id>", methods=["DELETE"])
+@login_required
+@role_can_write
+def api_delete_categoria_fin(row_id):
+    return _crud_delete("categorias_financeiras", row_id)
 
 
 # ============================================================

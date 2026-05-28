@@ -882,6 +882,9 @@
             <div class="nav-item" data-view="contratos"><i class="ri-file-shield-2-line"></i>Contratos</div>
             <div class="nav-item" data-view="documentos"><i class="ri-folder-2-line"></i>Documentos</div>
             <div class="nav-item" data-view="despesas"><i class="ri-money-dollar-circle-line"></i>Despesas</div>
+            <div class="nav-item" data-view="fornecedores"><i class="ri-truck-line"></i>Fornecedores</div>
+            <div class="nav-item" data-view="contas"><i class="ri-bank-line"></i>Contas</div>
+            <div class="nav-item" data-view="categorias"><i class="ri-price-tag-3-line"></i>Categorias</div>
             <div class="nav-item" data-view="doc-empresa"><i class="ri-building-2-line"></i>Docs Empresa</div>
             <div class="nav-section">Operacional</div>
             <div class="nav-item" data-view="caixa"><i class="ri-inbox-2-line"></i>Caixa de Entrada<span class="badge-count" id="nav-caixa-count" style="display:none"></span></div>
@@ -1118,11 +1121,9 @@
             </div>
             <div class="tabs" id="despesas-tabs">
                 <button class="tab active" onclick="filterDespesas('all',this)">Todas</button>
-                <button class="tab" onclick="filterDespesas('ferramentas',this)">Ferramentas</button>
-                <button class="tab" onclick="filterDespesas('hospedagem',this)">Hospedagem</button>
-                <button class="tab" onclick="filterDespesas('marketing',this)">Marketing</button>
-                <button class="tab" onclick="filterDespesas('salarios',this)">Salários</button>
-                <button class="tab" onclick="filterDespesas('outros',this)">Outros</button>
+                <button class="tab" onclick="filterDespesas('a_pagar',this)">A pagar</button>
+                <button class="tab" onclick="filterDespesas('atrasado',this)">Atrasadas</button>
+                <button class="tab" onclick="filterDespesas('pago',this)">Pagas</button>
             </div>
             <div class="card">
                 <div class="card-body">
@@ -1130,11 +1131,12 @@
                         <thead>
                             <tr>
                                 <th>Descrição</th>
-                                <th>Responsável</th>
-                                <th>Vertical</th>
                                 <th>Categoria</th>
+                                <th>Fornecedor</th>
+                                <th>Status</th>
+                                <th>Vencimento</th>
                                 <th>Valor</th>
-                                <th>Data</th>
+                                <th>Anexo</th>
                                 <th>Ações</th>
                             </tr>
                         </thead>
@@ -1142,6 +1144,37 @@
                     </table>
                 </div>
             </div>
+        </div>
+
+        <!-- ===== FORNECEDORES ===== -->
+        <div class="view" id="view-fornecedores">
+            <div class="page-header">
+                <div><h1>Fornecedores & Parceiros</h1><p>Empresas, parceiros, funcionários e favorecidos</p></div>
+                <button class="btn btn-primary" onclick="openCadModal('fornecedor')"><i class="ri-add-line"></i>Novo Fornecedor</button>
+            </div>
+            <div class="card"><div class="card-body"><table>
+                <thead><tr><th>Nome</th><th>Tipo</th><th>CNPJ/CPF</th><th>Contato</th><th>Ações</th></tr></thead>
+                <tbody id="fornecedores-body"></tbody>
+            </table></div></div>
+        </div>
+
+        <!-- ===== CONTAS BANCÁRIAS ===== -->
+        <div class="view" id="view-contas">
+            <div class="page-header">
+                <div><h1>Contas Bancárias</h1><p>Saldo = saldo inicial − despesas pagas pela conta</p></div>
+                <button class="btn btn-primary" onclick="openCadModal('conta')"><i class="ri-add-line"></i>Nova Conta</button>
+            </div>
+            <div class="stats-grid" id="contas-stats"></div>
+            <div id="contas-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin-top:16px"></div>
+        </div>
+
+        <!-- ===== CATEGORIAS (PLANO DE CONTAS) ===== -->
+        <div class="view" id="view-categorias">
+            <div class="page-header">
+                <div><h1>Plano de Contas</h1><p>Categorias de despesas e receitas</p></div>
+                <button class="btn btn-primary" onclick="openCadModal('categoria')"><i class="ri-add-line"></i>Nova Categoria</button>
+            </div>
+            <div class="card"><div class="card-body" id="categorias-body" style="padding:20px"></div></div>
         </div>
 
         <!-- ===== HEALTH MONITOR ===== -->
@@ -1288,7 +1321,18 @@
         });
 
         let leadsCache = [], verticaisCache = [], contratosCache = [], despesasCache = [];
+        let categoriasFinCache = [], fornecedoresCache = [], contasCache = [];
         let despesaFilter = 'all';
+        const DESPESA_STATUS = {
+            pago: { label: 'Pago', color: '#10b981' },
+            a_pagar: { label: 'A pagar', color: '#3b82f6' },
+            atrasado: { label: 'Atrasado', color: '#ef4444' },
+            cancelado: { label: 'Cancelado', color: '#94a3b8' },
+        };
+        const FORMA_PAGAMENTO = {
+            pix: 'PIX', boleto: 'Boleto', cartao_credito: 'Cartão crédito', cartao_debito: 'Cartão débito',
+            dinheiro: 'Dinheiro', transferencia: 'Transferência', debito_automatico: 'Débito automático', outro: 'Outro',
+        };
 
         async function api(url, opts = {}) {
             opts.headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
@@ -1319,6 +1363,9 @@
             else if (v === 'documentos') await loadDocumentos();
             else if (v === 'doc-empresa') await loadDocEmpresa();
             else if (v === 'despesas') await loadDespesas();
+            else if (v === 'fornecedores') await loadFornecedores();
+            else if (v === 'contas') await loadContas();
+            else if (v === 'categorias') await loadCategorias();
             else if (v === 'health') await loadHealth();
             else if (v === 'caixa') await loadCaixaEntrada();
             else if (v === 'users') await loadUsers();
@@ -2164,15 +2211,24 @@
             procuracao:'Procuração',rg_cpf_socios:'RG/CPF Sócios',comprovante_endereco:'Comprovante Endereço',outro:'Outro'
         };
 
+        // Converte links de arquivos para a rota proxy protegida (URLs assinadas).
+        // URLs públicas antigas (/object/public/...) viram /api/file/...; links externos (http) ficam.
+        function fileUrl(u) {
+            if (!u) return '';
+            const m = u.match(/\/object\/(?:public|sign)\/([^?]+)/);
+            if (m) return '/api/file/' + m[1].split('?')[0];
+            return u;
+        }
+
         async function loadDocumentos() {
             const data = await api('/api/documentos');
             document.getElementById('docs-body').innerHTML = data.map(d => `<tr>
-        <td>${d.url ? '<a href="' + d.url + '" target="_blank" style="color:var(--primary)">' + d.titulo + '</a>' : d.titulo}</td>
+        <td>${d.url ? '<a href="' + fileUrl(d.url) + '" target="_blank" style="color:var(--primary)">' + d.titulo + '</a>' : d.titulo}</td>
         <td><span class="badge badge-purple">${DOC_TIPOS[d.tipo] || d.tipo || '—'}</span></td>
         <td>${d.leads?.nome || d.entidades?.razao_social || '—'}</td>
         <td>${d.contratos?.nome || '—'}</td>
         <td>${fmtDate(d.created_at)}</td>
-        <td>${d.url ? '<a href="' + d.url + '" target="_blank" style="color:var(--primary)"><i class="ri-download-line"></i></a>' : '—'}</td>
+        <td>${d.url ? '<a href="' + fileUrl(d.url) + '" target="_blank" style="color:var(--primary)"><i class="ri-download-line"></i></a>' : '—'}</td>
         <td>
             <button onclick='editDocumento(${JSON.stringify(d).replace(/'/g,"&#39;")})' style="background:none;border:none;color:var(--primary);cursor:pointer;padding:4px" title="Editar"><i class="ri-edit-line"></i></button>
             <button onclick="deleteDocumento('${d.id}','${(d.titulo||'').replace(/'/g,"\\'")}') " style="background:none;border:none;color:#f87171;cursor:pointer;padding:4px" title="Excluir"><i class="ri-delete-bin-line"></i></button>
@@ -2224,7 +2280,7 @@
                             <td>${d.titulo}</td>
                             <td><span class="badge badge-purple">${DOC_TIPOS[d.tipo] || d.tipo}</span></td>
                             <td>${fmtDate(d.created_at)}</td>
-                            <td>${d.url ? '<a href="'+d.url+'" target="_blank" style="color:var(--primary)"><i class="ri-download-line"></i> Baixar</a>' : '—'}</td>
+                            <td>${d.url ? '<a href="'+fileUrl(d.url)+'" target="_blank" style="color:var(--primary)"><i class="ri-download-line"></i> Baixar</a>' : '—'}</td>
                         </tr>`;
                     });
                     catsHtml += '</tbody></table>';
@@ -2243,38 +2299,55 @@
             document.getElementById('doc-empresa-cats').innerHTML = catsHtml;
         }
 
+        // Nome da categoria de uma despesa (usa o join novo; cai para o texto antigo)
+        function despCatNome(d) {
+            return d.categorias_financeiras?.nome || d.categoria || 'Sem categoria';
+        }
+        function hojeISO() { return new Date().toISOString().split('T')[0]; }
+        function despAtrasada(d) {
+            return d.status === 'atrasado' || (d.status === 'a_pagar' && d.data_vencimento && d.data_vencimento < hojeISO());
+        }
+
         async function loadDespesas() {
             if (!verticaisCache.length) verticaisCache = await api('/api/verticais');
-            despesasCache = await api('/api/despesas');
+            const [desp, cats, forns, contas] = await Promise.all([
+                api('/api/despesas'),
+                api('/api/categorias-financeiras'),
+                api('/api/fornecedores'),
+                api('/api/contas'),
+            ]);
+            despesasCache = desp || [];
+            categoriasFinCache = (cats || []).filter(c => c.tipo === 'despesa');
+            fornecedoresCache = (forns || []).filter(c => c.ativo !== false);
+            contasCache = (contas || []).filter(c => c.ativo !== false);
 
             const now = new Date();
             const currentMonth = now.getMonth();
             const currentYear = now.getFullYear();
+            const ativas = despesasCache.filter(d => d.status !== 'cancelado');
 
-            const totalMes = despesasCache.filter(d => {
+            const totalMes = ativas.filter(d => {
                 if (!d.data) return false;
                 const dt = new Date(d.data + 'T12:00:00');
                 return dt.getMonth() === currentMonth && dt.getFullYear() === currentYear;
             }).reduce((s, d) => s + parseFloat(d.valor || 0), 0);
 
-            const totalAno = despesasCache.filter(d => {
-                if (!d.data) return false;
-                return new Date(d.data + 'T12:00:00').getFullYear() === currentYear;
-            }).reduce((s, d) => s + parseFloat(d.valor || 0), 0);
+            const aPagar = despesasCache.filter(d => d.status === 'a_pagar' || d.status === 'atrasado');
+            const totalAPagar = aPagar.reduce((s, d) => s + parseFloat(d.valor || 0), 0);
+            const atrasadas = despesasCache.filter(despAtrasada);
+            const totalAtrasado = atrasadas.reduce((s, d) => s + parseFloat(d.valor || 0), 0);
 
             const catTotals = {};
-            despesasCache.forEach(d => {
-                const cat = d.categoria || 'outros';
+            ativas.forEach(d => {
+                const cat = despCatNome(d);
                 catTotals[cat] = (catTotals[cat] || 0) + parseFloat(d.valor || 0);
             });
-            const topEntry = Object.entries(catTotals).sort((a, b) => b[1] - a[1])[0];
-            const catLabels = { ferramentas: 'Ferramentas', hospedagem: 'Hospedagem', marketing: 'Marketing', salarios: 'Salários', outros: 'Outros' };
 
             document.getElementById('despesas-stats').innerHTML = `
         <div class="stat-card"><div class="stat-label">Gasto este Mês</div><div class="stat-value red">${fmt(totalMes)}</div><div class="stat-sub">${now.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}</div></div>
-        <div class="stat-card"><div class="stat-label">Gasto este Ano</div><div class="stat-value red">${fmt(totalAno)}</div><div class="stat-sub">${currentYear}</div></div>
+        <div class="stat-card"><div class="stat-label">A Pagar</div><div class="stat-value blue">${fmt(totalAPagar)}</div><div class="stat-sub">${aPagar.length} em aberto</div></div>
+        <div class="stat-card"><div class="stat-label">Atrasadas</div><div class="stat-value red">${fmt(totalAtrasado)}</div><div class="stat-sub">${atrasadas.length} vencidas</div></div>
         <div class="stat-card"><div class="stat-label">Total de Lançamentos</div><div class="stat-value blue">${despesasCache.length}</div><div class="stat-sub">registros</div></div>
-        <div class="stat-card"><div class="stat-label">Top Categoria</div><div class="stat-value yellow" style="font-size:18px">${topEntry ? (catLabels[topEntry[0]] || topEntry[0]) : '—'}</div><div class="stat-sub">${topEntry ? fmt(topEntry[1]) : '—'}</div></div>
     `;
 
             const breakdownCard = document.getElementById('despesas-breakdown-card');
@@ -2288,7 +2361,7 @@
                     const width = maxVal > 0 ? (val / maxVal * 100).toFixed(1) : 0;
                     return `<div style="margin-bottom:4px">
                 <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px">
-                    <span style="font-weight:500">${catLabels[cat] || cat}</span>
+                    <span style="font-weight:500">${cat}</span>
                     <span style="color:var(--text2)">${fmt(val)} <span style="color:#555;font-size:11px">(${pct}%)</span></span>
                 </div>
                 <div class="breakdown-bar"><div class="breakdown-bar-fill" style="width:${width}%"></div></div>
@@ -2302,18 +2375,32 @@
         }
 
         function renderDespesas() {
-            const filtered = despesaFilter === 'all' ? despesasCache : despesasCache.filter(d => d.categoria === despesaFilter);
-            document.getElementById('despesas-body').innerHTML = filtered.map(d => `<tr class="clickable" onclick="openDespesaDetail('${d.id}')">
-        <td><strong>${d.descricao || '—'}</strong></td>
-        <td>${d.responsavel || '—'}</td>
-        <td>${d.verticais ? d.verticais.icone + ' ' + d.verticais.nome : '—'}</td>
-        <td><span class="badge badge-yellow">${d.categoria || '—'}</span></td>
+            let filtered = despesasCache;
+            if (despesaFilter === 'a_pagar') filtered = despesasCache.filter(d => d.status === 'a_pagar' || d.status === 'atrasado');
+            else if (despesaFilter === 'atrasado') filtered = despesasCache.filter(despAtrasada);
+            else if (despesaFilter === 'pago') filtered = despesasCache.filter(d => d.status === 'pago');
+
+            document.getElementById('despesas-body').innerHTML = filtered.map(d => {
+                const st = DESPESA_STATUS[d.status] || DESPESA_STATUS.pago;
+                const vencido = despAtrasada(d);
+                const cat = d.categorias_financeiras;
+                const anexos = [];
+                if (d.comprovante_url) anexos.push(`<a href="${fileUrl(d.comprovante_url)}" target="_blank" title="Comprovante" style="color:var(--primary)"><i class="ri-receipt-line"></i></a>`);
+                if (d.nota_fiscal_url) anexos.push(`<a href="${fileUrl(d.nota_fiscal_url)}" target="_blank" title="Nota fiscal" style="color:#a855f7"><i class="ri-file-text-line"></i></a>`);
+                return `<tr class="clickable" onclick="openDespesaDetail('${d.id}')">
+        <td><strong>${d.descricao || '—'}</strong>${d.recorrente ? ' <i class="ri-repeat-line" title="Recorrente" style="color:#3b82f6;font-size:12px"></i>' : ''}</td>
+        <td>${cat ? '<span style="color:' + (cat.cor || '#888') + '">' + (cat.icone || '') + ' ' + cat.nome + '</span>' : (d.categoria || '—')}</td>
+        <td>${d.fornecedores?.nome || '—'}</td>
+        <td><span class="badge" style="background:${st.color}22;color:${st.color}">${st.label}</span></td>
+        <td style="${vencido ? 'color:var(--red);font-weight:600' : ''}">${d.data_vencimento ? fmtDate(d.data_vencimento) : '—'}</td>
         <td style="color:var(--red);font-weight:600">${fmt(d.valor)}</td>
-        <td>${fmtDate(d.data)}</td>
+        <td onclick="event.stopPropagation()">${anexos.join(' ') || '—'}</td>
         <td onclick="event.stopPropagation()"><div class="actions">
+            <button class="btn-icon" onclick="editDespesa('${d.id}')" title="Editar"><i class="ri-edit-line"></i></button>
             <button class="btn-icon danger" onclick="deleteDespesa('${d.id}','${(d.descricao || '').replace(/'/g, '')}')" title="Excluir"><i class="ri-delete-bin-line"></i></button>
         </div></td>
-    </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:#555;padding:30px">Nenhuma despesa encontrada</td></tr>';
+    </tr>`;
+            }).join('') || '<tr><td colspan="8" style="text-align:center;color:#555;padding:30px">Nenhuma despesa encontrada</td></tr>';
         }
 
         function filterDespesas(cat, btn) {
@@ -2340,16 +2427,161 @@
             <div style="font-size:36px;font-weight:700;color:var(--red);letter-spacing:-1px">${fmt(d.valor)}</div>
         </div>
         <div class="lead-detail">
-            <div class="field"><div class="field-label">Categoria</div><div class="field-value"><span class="badge badge-yellow">${d.categoria || '—'}</span></div></div>
-            <div class="field"><div class="field-label">Data</div><div class="field-value">${fmtDate(d.data)}</div></div>
+            <div class="field"><div class="field-label">Categoria</div><div class="field-value">${d.categorias_financeiras ? (d.categorias_financeiras.icone || '') + ' ' + d.categorias_financeiras.nome : (d.categoria || '—')}</div></div>
+            <div class="field"><div class="field-label">Status</div><div class="field-value"><span class="badge" style="background:${(DESPESA_STATUS[d.status] || DESPESA_STATUS.pago).color}22;color:${(DESPESA_STATUS[d.status] || DESPESA_STATUS.pago).color}">${(DESPESA_STATUS[d.status] || DESPESA_STATUS.pago).label}</span></div></div>
+            <div class="field"><div class="field-label">Fornecedor</div><div class="field-value">${d.fornecedores?.nome || '—'}</div></div>
+            <div class="field"><div class="field-label">Conta / Origem</div><div class="field-value">${d.contas_bancarias?.nome || '—'}</div></div>
+            <div class="field"><div class="field-label">Competência</div><div class="field-value">${fmtDate(d.data)}</div></div>
+            <div class="field"><div class="field-label">Vencimento</div><div class="field-value">${d.data_vencimento ? fmtDate(d.data_vencimento) : '—'}</div></div>
+            <div class="field"><div class="field-label">Forma de pagamento</div><div class="field-value">${FORMA_PAGAMENTO[d.forma_pagamento] || '—'}</div></div>
+            <div class="field"><div class="field-label">Recorrência</div><div class="field-value">${d.recorrente ? (d.recorrencia_periodo || 'sim') : '—'}</div></div>
             <div class="field"><div class="field-label">Responsável</div><div class="field-value">${d.responsavel || '—'}</div></div>
             <div class="field"><div class="field-label">Vertical</div><div class="field-value">${d.verticais ? d.verticais.icone + ' ' + d.verticais.nome : '—'}</div></div>
             ${d.notas ? '<div class="field full"><div class="field-label">Notas</div><div class="field-value" style="white-space:pre-wrap">' + d.notas + '</div></div>' : ''}
         </div>
-        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end">
+        ${(d.comprovante_url || d.nota_fiscal_url) ? `<div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+            ${d.comprovante_url ? '<a class="btn btn-ghost btn-sm" href="' + fileUrl(d.comprovante_url) + '" target="_blank"><i class="ri-receipt-line"></i> Ver comprovante</a>' : ''}
+            ${d.nota_fiscal_url ? '<a class="btn btn-ghost btn-sm" href="' + fileUrl(d.nota_fiscal_url) + '" target="_blank"><i class="ri-file-text-line"></i> Ver nota fiscal</a>' : ''}
+        </div>` : ''}
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between">
+            <button class="btn btn-primary" onclick="editDespesa('${d.id}')"><i class="ri-edit-line"></i> Editar</button>
             <button class="btn btn-danger" onclick="deleteDespesa('${d.id}','${(d.descricao || '').replace(/'/g, '')}');closeModal()"><i class="ri-delete-bin-line"></i> Excluir despesa</button>
         </div>`;
             document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        // ===== CADASTROS FINANCEIROS (Fornecedores / Contas / Categorias) =====
+        let cadData = { fornecedor: [], conta: [], categoria: [] };
+        const FORN_TIPOS = { fornecedor: '🏪 Fornecedor', parceiro: '🤝 Parceiro', funcionario: '👤 Funcionário', banco: '🏦 Banco', governo: '🏛️ Governo', outro: '📦 Outro' };
+        const CONTA_TIPOS = { corrente: 'Conta Corrente', poupanca: 'Poupança', caixa: 'Caixa', cartao: 'Cartão', investimento: 'Investimento' };
+        const CAD_EP = { fornecedor: '/api/fornecedores', conta: '/api/contas', categoria: '/api/categorias-financeiras' };
+
+        async function loadFornecedores() {
+            const data = await api('/api/fornecedores') || [];
+            cadData.fornecedor = data;
+            document.getElementById('fornecedores-body').innerHTML = data.map(f => `<tr>
+        <td><strong>${f.nome}</strong>${f.ativo === false ? ' <span style="color:#888;font-size:11px">(inativo)</span>' : ''}</td>
+        <td>${FORN_TIPOS[f.tipo] || f.tipo || '—'}</td>
+        <td>${f.cnpj_cpf || '—'}</td>
+        <td style="font-size:12px">${[f.contato, f.telefone, f.email].filter(Boolean).join(' · ') || '—'}</td>
+        <td><div class="actions">
+            <button class="btn-icon" onclick="editCad('fornecedor','${f.id}')" title="Editar"><i class="ri-edit-line"></i></button>
+            <button class="btn-icon danger" onclick="deleteCad('fornecedor','${f.id}','${(f.nome || '').replace(/'/g, '')}')" title="Excluir"><i class="ri-delete-bin-line"></i></button>
+        </div></td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:#555;padding:30px">Nenhum fornecedor cadastrado</td></tr>';
+        }
+
+        async function loadContas() {
+            const [contas, desp] = await Promise.all([api('/api/contas'), api('/api/despesas')]);
+            cadData.conta = contas || [];
+            const gasto = {};
+            (desp || []).forEach(d => { if (d.conta_id && d.status === 'pago') gasto[d.conta_id] = (gasto[d.conta_id] || 0) + parseFloat(d.valor || 0); });
+            const saldoTotal = (contas || []).reduce((s, c) => s + (parseFloat(c.saldo_inicial || 0) - (gasto[c.id] || 0)), 0);
+            document.getElementById('contas-stats').innerHTML = `<div class="stat-card"><div class="stat-label">Saldo Consolidado</div><div class="stat-value ${saldoTotal >= 0 ? 'green' : 'red'}">${fmt(saldoTotal)}</div><div class="stat-sub">${(contas || []).filter(c => c.ativo !== false).length} contas ativas</div></div>`;
+            document.getElementById('contas-grid').innerHTML = (contas || []).map(c => {
+                const saldo = parseFloat(c.saldo_inicial || 0) - (gasto[c.id] || 0);
+                return `<div class="card" style="padding:16px;${c.ativo === false ? 'opacity:.5' : ''}">
+            <div style="display:flex;justify-content:space-between;align-items:start">
+                <div><div style="font-weight:600">${c.nome}</div><div style="font-size:11px;color:var(--text2)">${CONTA_TIPOS[c.tipo] || c.tipo}${c.banco ? ' · ' + c.banco : ''}</div></div>
+                <div class="actions">
+                    <button class="btn-icon" onclick="editCad('conta','${c.id}')" title="Editar"><i class="ri-edit-line"></i></button>
+                    <button class="btn-icon danger" onclick="deleteCad('conta','${c.id}','${(c.nome || '').replace(/'/g, '')}')" title="Excluir"><i class="ri-delete-bin-line"></i></button>
+                </div>
+            </div>
+            <div style="font-size:24px;font-weight:700;margin-top:12px;color:${saldo >= 0 ? 'var(--text)' : 'var(--red)'}">${fmt(saldo)}</div>
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-top:4px"><span>Inicial: ${fmt(c.saldo_inicial || 0)}</span><span>Gasto: ${fmt(gasto[c.id] || 0)}</span></div>
+        </div>`;
+            }).join('') || '<p style="color:#555;padding:20px">Nenhuma conta cadastrada</p>';
+        }
+
+        async function loadCategorias() {
+            const data = await api('/api/categorias-financeiras') || [];
+            cadData.categoria = data;
+            const grupo = (titulo, tipo) => {
+                const itens = data.filter(c => c.tipo === tipo);
+                const chips = itens.map(c => `<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:20px;border:1px solid ${(c.cor || '#888')}55;background:${(c.cor || '#888')}11;margin:4px;font-size:13px">
+            <span style="color:${c.cor || '#888'}">${c.icone || ''} ${c.nome}</span>
+            <i class="ri-edit-line" style="cursor:pointer;color:#888;font-size:12px" onclick="editCad('categoria','${c.id}')"></i>
+            <i class="ri-close-line" style="cursor:pointer;color:#f87171;font-size:13px" onclick="deleteCad('categoria','${c.id}','${(c.nome || '').replace(/'/g, '')}')"></i>
+        </span>`).join('') || '<span style="color:#888;font-size:13px">Nenhuma</span>';
+                return `<div style="margin-bottom:20px"><div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:8px">${titulo}</div><div>${chips}</div></div>`;
+            };
+            document.getElementById('categorias-body').innerHTML = grupo('🔻 Despesas', 'despesa') + grupo('🔺 Receitas', 'receita');
+        }
+
+        // --- Modais de cadastro ---
+        function openCadModal(tipo) { editCad(tipo, null); }
+        function editCad(tipo, id) {
+            const d = id ? (cadData[tipo] || []).find(x => x.id === id) : null;
+            const forms = { fornecedor: cadFornecedorForm, conta: cadContaForm, categoria: cadCategoriaForm };
+            document.getElementById('modal-content').innerHTML = forms[tipo](d);
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+        const escA = s => (s || '').toString().replace(/"/g, '&quot;');
+
+        function cadFornecedorForm(d) {
+            d = d || {};
+            const tipoOpts = Object.entries(FORN_TIPOS).map(([k, v]) => `<option value="${k}" ${d.tipo === k ? 'selected' : ''}>${v}</option>`).join('');
+            return `<h3>${d.id ? 'Editar' : 'Novo'} Fornecedor</h3><form onsubmit="saveCad(event,'fornecedor'${d.id ? ",'" + d.id + "'" : ''})">
+    <div class="form-group"><label>Nome *</label><input name="nome" required value="${escA(d.nome)}"></div>
+    <div class="form-row"><div class="form-group"><label>Tipo</label><select name="tipo">${tipoOpts}</select></div><div class="form-group"><label>CNPJ / CPF</label><input name="cnpj_cpf" value="${escA(d.cnpj_cpf)}"></div></div>
+    <div class="form-group"><label>Pessoa de contato</label><input name="contato" value="${escA(d.contato)}"></div>
+    <div class="form-row"><div class="form-group"><label>Telefone</label><input name="telefone" value="${escA(d.telefone)}"></div><div class="form-group"><label>E-mail</label><input name="email" type="email" value="${escA(d.email)}"></div></div>
+    <div class="form-group"><label>Notas</label><textarea name="notas" rows="2">${escA(d.notas)}</textarea></div>
+    <div class="form-group"><label><input type="checkbox" name="ativo" ${d.ativo !== false ? 'checked' : ''}> Ativo</label></div>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button id="cad-submit-btn" type="submit" class="btn btn-primary">${d.id ? 'Atualizar' : 'Salvar'}</button></div></form>`;
+        }
+
+        function cadContaForm(d) {
+            d = d || {};
+            const tipoOpts = Object.entries(CONTA_TIPOS).map(([k, v]) => `<option value="${k}" ${d.tipo === k ? 'selected' : ''}>${v}</option>`).join('');
+            return `<h3>${d.id ? 'Editar' : 'Nova'} Conta</h3><form onsubmit="saveCad(event,'conta'${d.id ? ",'" + d.id + "'" : ''})">
+    <div class="form-group"><label>Nome / Apelido *</label><input name="nome" required value="${escA(d.nome)}" placeholder="Ex: Itaú PJ, Caixa interno"></div>
+    <div class="form-row"><div class="form-group"><label>Tipo</label><select name="tipo">${tipoOpts}</select></div><div class="form-group"><label>Banco</label><input name="banco" value="${escA(d.banco)}"></div></div>
+    <div class="form-row"><div class="form-group"><label>Agência</label><input name="agencia" value="${escA(d.agencia)}"></div><div class="form-group"><label>Conta</label><input name="conta" value="${escA(d.conta)}"></div></div>
+    <div class="form-group"><label>Saldo inicial (R$)</label><input name="saldo_inicial" type="number" step="0.01" value="${d.saldo_inicial || ''}"></div>
+    <div class="form-group"><label>Notas</label><textarea name="notas" rows="2">${escA(d.notas)}</textarea></div>
+    <div class="form-group"><label><input type="checkbox" name="ativo" ${d.ativo !== false ? 'checked' : ''}> Ativa</label></div>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button id="cad-submit-btn" type="submit" class="btn btn-primary">${d.id ? 'Atualizar' : 'Salvar'}</button></div></form>`;
+        }
+
+        function cadCategoriaForm(d) {
+            d = d || {};
+            return `<h3>${d.id ? 'Editar' : 'Nova'} Categoria</h3><form onsubmit="saveCad(event,'categoria'${d.id ? ",'" + d.id + "'" : ''})">
+    <div class="form-row"><div class="form-group"><label>Nome *</label><input name="nome" required value="${escA(d.nome)}"></div><div class="form-group"><label>Tipo</label><select name="tipo"><option value="despesa" ${d.tipo === 'despesa' ? 'selected' : ''}>Despesa</option><option value="receita" ${d.tipo === 'receita' ? 'selected' : ''}>Receita</option></select></div></div>
+    <div class="form-row"><div class="form-group"><label>Ícone (emoji)</label><input name="icone" value="${escA(d.icone) || '📦'}" maxlength="2"></div><div class="form-group"><label>Cor</label><input name="cor" type="color" value="${d.cor || '#94a3b8'}" style="height:40px;padding:2px"></div></div>
+    <div class="form-group"><label><input type="checkbox" name="ativo" ${d.ativo !== false ? 'checked' : ''}> Ativa</label></div>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button id="cad-submit-btn" type="submit" class="btn btn-primary">${d.id ? 'Atualizar' : 'Salvar'}</button></div></form>`;
+        }
+
+        async function saveCad(e, tipo, id) {
+            e.preventDefault();
+            const f = e.target;
+            const btn = document.getElementById('cad-submit-btn');
+            btn.disabled = true; btn.textContent = 'Salvando...';
+            try {
+                const payload = {};
+                Array.from(f.elements).forEach(el => {
+                    if (!el.name) return;
+                    if (el.type === 'checkbox') payload[el.name] = el.checked;
+                    else if (el.type === 'number') payload[el.name] = el.value ? parseFloat(el.value) : 0;
+                    else payload[el.name] = el.value || null;
+                });
+                if (id) await api(CAD_EP[tipo] + '/' + id, { method: 'PATCH', body: payload });
+                else await api(CAD_EP[tipo], { method: 'POST', body: payload });
+                closeModal();
+                const reload = { fornecedor: loadFornecedores, conta: loadContas, categoria: loadCategorias };
+                reload[tipo]();
+            } catch (err) {
+                alert('Erro ao salvar: ' + err.message);
+                btn.disabled = false; btn.textContent = id ? 'Atualizar' : 'Salvar';
+            }
+        }
+
+        async function deleteCad(tipo, id, nome) {
+            if (!confirm(`Excluir "${nome}"? Lançamentos vinculados ficarão sem este vínculo.`)) return;
+            await api(CAD_EP[tipo] + '/' + id, { method: 'DELETE' });
+            const reload = { fornecedor: loadFornecedores, conta: loadContas, categoria: loadCategorias };
+            reload[tipo]();
         }
 
         // === HEALTH MONITOR (atualizado) ===
@@ -2502,6 +2734,14 @@
             if ((type === 'lead' || type === 'tarefa' || type === 'contrato' || type === 'documento' || type === 'despesa') && !verticaisCache.length) {
                 verticaisCache = await api('/api/verticais');
                 leadsCache = await api('/api/leads');
+            }
+            if (type === 'despesa' && !categoriasFinCache.length) {
+                const [cats, forns, contas] = await Promise.all([
+                    api('/api/categorias-financeiras'), api('/api/fornecedores'), api('/api/contas'),
+                ]);
+                categoriasFinCache = (cats || []).filter(c => c.tipo === 'despesa');
+                fornecedoresCache = (forns || []).filter(c => c.ativo !== false);
+                contasCache = (contas || []).filter(c => c.ativo !== false);
             }
             const el = document.getElementById('modal-content');
             el.classList.remove('wide', 'xl');
@@ -3026,15 +3266,42 @@
     <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary" id="doc-submit-btn">Salvar</button></div></form>`;
         }
 
-        function modalDespesa() {
-            const vertOpts = verticaisCache.map(v => `<option value="${v.id}">${v.icone} ${v.nome}</option>`).join('');
-            return `<h3>Nova Despesa</h3><form onsubmit="saveDespesa(event)">
-    <div class="form-group"><label>Descrição</label><input name="descricao" required></div>
-    <div class="form-row"><div class="form-group"><label>Responsável</label><input name="responsavel" type="text" placeholder="Nome de quem pagou"></div><div class="form-group"><label>Vertical</label><select name="vertical_id"><option value="">— nenhuma —</option>${vertOpts}</select></div></div>
-    <div class="form-row"><div class="form-group"><label>Categoria</label><select name="categoria"><option value="ferramentas">Ferramentas</option><option value="hospedagem">Hospedagem</option><option value="marketing">Marketing</option><option value="salarios">Salários</option><option value="outros">Outros</option></select></div><div class="form-group"><label>Valor (R$)</label><input name="valor" type="number" step="0.01" required></div></div>
-    <div class="form-group"><label>Data</label><input name="data" type="date" required></div>
-    <div class="form-group"><label>Notas</label><textarea name="notas" rows="2"></textarea></div>
-    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div></form>`;
+        function modalDespesa() { return despesaForm(null); }
+
+        function editDespesa(id) {
+            const d = despesasCache.find(x => x.id === id);
+            if (!d) return;
+            document.getElementById('modal-content').innerHTML = despesaForm(d);
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function despesaForm(d) {
+            d = d || {};
+            const sel = (v, val) => v == val ? 'selected' : '';
+            const esc = s => (s || '').toString().replace(/"/g, '&quot;');
+            const vertOpts = verticaisCache.map(v => `<option value="${v.id}" ${sel(v.id, d.vertical_id)}>${v.icone} ${v.nome}</option>`).join('');
+            const catOpts = categoriasFinCache.map(c => `<option value="${c.id}" ${sel(c.id, d.categoria_id)}>${c.icone || ''} ${c.nome}</option>`).join('');
+            const fornOpts = fornecedoresCache.map(f => `<option value="${f.id}" ${sel(f.id, d.fornecedor_id)}>${f.nome}</option>`).join('');
+            const contaOpts = contasCache.map(c => `<option value="${c.id}" ${sel(c.id, d.conta_id)}>${c.nome}</option>`).join('');
+            const statusOpts = Object.entries(DESPESA_STATUS).map(([k, v]) => `<option value="${k}" ${sel(k, d.status || 'pago')}>${v.label}</option>`).join('');
+            const fpOpts = '<option value="">—</option>' + Object.entries(FORMA_PAGAMENTO).map(([k, v]) => `<option value="${k}" ${sel(k, d.forma_pagamento)}>${v}</option>`).join('');
+            const recOpts = ['mensal', 'bimestral', 'trimestral', 'semestral', 'anual'].map(p => `<option value="${p}" ${sel(p, d.recorrencia_periodo || 'mensal')}>${p[0].toUpperCase() + p.slice(1)}</option>`).join('');
+            const isEdit = !!d.id;
+            return `<h3>${isEdit ? 'Editar' : 'Nova'} Despesa</h3><form onsubmit="saveDespesa(event${isEdit ? ",'" + d.id + "'" : ''})">
+    <div class="form-group"><label>Descrição *</label><input name="descricao" required value="${esc(d.descricao)}"></div>
+    <div class="form-row"><div class="form-group"><label>Categoria</label><select name="categoria_id">${catOpts || '<option value="">— cadastre categorias —</option>'}</select></div><div class="form-group"><label>Valor (R$) *</label><input name="valor" type="number" step="0.01" required value="${d.valor || ''}"></div></div>
+    <div class="form-row"><div class="form-group"><label>Status</label><select name="status">${statusOpts}</select></div><div class="form-group"><label>Forma de pagamento</label><select name="forma_pagamento">${fpOpts}</select></div></div>
+    <div class="form-row"><div class="form-group"><label>Competência *</label><input name="data" type="date" required value="${d.data || ''}"></div><div class="form-group"><label>Vencimento</label><input name="data_vencimento" type="date" value="${d.data_vencimento || ''}"></div></div>
+    <div class="form-row"><div class="form-group"><label>Fornecedor</label><select name="fornecedor_id"><option value="">—</option>${fornOpts}</select></div><div class="form-group"><label>Conta / Origem</label><select name="conta_id"><option value="">—</option>${contaOpts}</select></div></div>
+    <div class="form-row"><div class="form-group"><label>Responsável</label><input name="responsavel" value="${esc(d.responsavel)}" placeholder="Quem pagou"></div><div class="form-group"><label>Vertical</label><select name="vertical_id"><option value="">— nenhuma —</option>${vertOpts}</select></div></div>
+    <div class="form-group"><label><input type="checkbox" name="recorrente" ${d.recorrente ? 'checked' : ''} onchange="document.getElementById('rec-periodo').style.display=this.checked?'block':'none'"> Despesa recorrente</label>
+        <div id="rec-periodo" style="display:${d.recorrente ? 'block' : 'none'};margin-top:6px"><select name="recorrencia_periodo">${recOpts}</select></div></div>
+    <div class="form-row">
+        <div class="form-group"><label>📎 Comprovante ${d.comprovante_url ? '<span style="color:#10b981">(anexado)</span>' : ''}</label><input id="desp-comprovante" type="file" accept="image/*,application/pdf"></div>
+        <div class="form-group"><label>🧾 Nota fiscal ${d.nota_fiscal_url ? '<span style="color:#10b981">(anexada)</span>' : ''}</label><input id="desp-nf" type="file" accept="image/*,application/pdf"></div>
+    </div>
+    <div class="form-group"><label>Notas</label><textarea name="notas" rows="2">${esc(d.notas)}</textarea></div>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button id="desp-submit-btn" type="submit" class="btn btn-primary">${isEdit ? 'Atualizar' : 'Salvar'}</button></div></form>`;
         }
 
         function modalUser() {
@@ -3152,7 +3419,55 @@
             if (typeof loadDocEmpresa === 'function') loadDocEmpresa();
         }
 
-        async function saveDespesa(e) { await api('/api/despesas', { method: 'POST', body: formData(e) }); closeModal(); loadDespesas(); }
+        async function uploadDespesaFile(inputId) {
+            const inp = document.getElementById(inputId);
+            if (!inp || !inp.files || !inp.files[0]) return null;
+            const fd = new FormData();
+            fd.append('file', inp.files[0]);
+            fd.append('bucket', 'comprovantes');
+            const resp = await fetch('/api/upload', { method: 'POST', body: fd });
+            const r = await resp.json();
+            if (!r.url && !r.path) throw new Error(r.error || 'Falha no upload do anexo');
+            return r.url || r.path;
+        }
+
+        async function saveDespesa(e, id) {
+            e.preventDefault();
+            const f = e.target;
+            const btn = document.getElementById('desp-submit-btn');
+            btn.disabled = true; btn.textContent = 'Salvando...';
+            try {
+                const payload = {
+                    descricao: f.descricao.value,
+                    categoria_id: f.categoria_id.value || null,
+                    valor: parseFloat(f.valor.value) || 0,
+                    status: f.status.value,
+                    forma_pagamento: f.forma_pagamento.value || null,
+                    data: f.data.value,
+                    data_vencimento: f.data_vencimento.value || null,
+                    fornecedor_id: f.fornecedor_id.value || null,
+                    conta_id: f.conta_id.value || null,
+                    responsavel: f.responsavel.value || null,
+                    vertical_id: f.vertical_id.value || null,
+                    recorrente: f.recorrente.checked,
+                    recorrencia_periodo: f.recorrente.checked ? f.recorrencia_periodo.value : null,
+                    notas: f.notas.value || null,
+                };
+                if (payload.status === 'pago' && !f.data_vencimento.value) payload.data_pagamento = payload.data;
+                btn.textContent = 'Enviando anexos...';
+                const comp = await uploadDespesaFile('desp-comprovante');
+                if (comp) payload.comprovante_url = comp;
+                const nf = await uploadDespesaFile('desp-nf');
+                if (nf) payload.nota_fiscal_url = nf;
+                btn.textContent = 'Salvando...';
+                if (id) await api('/api/despesas/' + id, { method: 'PATCH', body: payload });
+                else await api('/api/despesas', { method: 'POST', body: payload });
+                closeModal(); loadDespesas();
+            } catch (err) {
+                alert('Erro ao salvar: ' + err.message);
+                btn.disabled = false; btn.textContent = id ? 'Atualizar' : 'Salvar';
+            }
+        }
         async function deleteDespesa(id, descricao) {
             if (!confirm(`Excluir despesa "${descricao}"? Esta ação não pode ser desfeita.`)) return;
             await api('/api/despesas/' + id, { method: 'DELETE' });
