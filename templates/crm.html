@@ -2734,8 +2734,58 @@
         }
 
         // ===== EMPRÉSTIMOS (dinheiro que a empresa tomou) =====
-        function empSaldo(em) { return Math.max(0, parseFloat(em.valor_total || em.valor_principal || 0) - parseFloat(em.valor_pago || 0)); }
-        function empJuros(em) { return Math.max(0, parseFloat(em.valor_total || 0) - parseFloat(em.valor_principal || 0)); }
+        // Soma n meses a uma data 'YYYY-MM-DD' e devolve ISO; ajusta fim de mês (ex: 31 -> último dia válido).
+        function addMonthsISO(iso, n) {
+            if (!iso) return '';
+            const [y, m, d] = iso.split('-').map(Number);
+            const base = new Date(y, (m - 1) + n, 1);
+            const lastDay = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+            base.setDate(Math.min(d, lastDay));
+            const mm = String(base.getMonth() + 1).padStart(2, '0');
+            const dd = String(base.getDate()).padStart(2, '0');
+            return `${base.getFullYear()}-${mm}-${dd}`;
+        }
+        // Gera o cronograma de juros (taxa × saldo aportado vigente em cada mês) + devolução do principal no vencimento.
+        function empCronograma(em) {
+            const taxa = (parseFloat(em.taxa_juros) || 0) / 100;
+            const prazo = parseInt(em.prazo_meses) || parseInt(em.num_parcelas) || 1;
+            const inicio = em.data_recebimento;
+            const aportes = (em.aportes || []).filter(a => a && a.valor)
+                .map(a => ({ data: a.data || inicio, valor: parseFloat(a.valor) || 0 }))
+                .sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+            const pagamentos = em.pagamentos || {};
+            const totalAportado = aportes.length
+                ? aportes.reduce((s, a) => s + a.valor, 0)
+                : (parseFloat(em.valor_principal) || 0);
+            const parcelas = [];
+            for (let m = 1; m <= prazo; m++) {
+                // base = aportes liberados até o início do mês m (ou seja, até início + (m-1) meses)
+                const limite = inicio ? addMonthsISO(inicio, m - 1) : '';
+                const base = aportes.length
+                    ? aportes.filter(a => !limite || (a.data || '') <= limite).reduce((s, a) => s + a.valor, 0)
+                    : (parseFloat(em.valor_principal) || 0);
+                const pg = pagamentos[String(m)];
+                parcelas.push({
+                    chave: String(m), mes: m, tipo: 'juros',
+                    vencimento: inicio ? addMonthsISO(inicio, m) : '',
+                    base, valor: Math.round(base * taxa * 100) / 100,
+                    pago: !!(pg && pg.pago), pago_em: pg && pg.data,
+                });
+            }
+            const pgP = pagamentos['principal'];
+            parcelas.push({
+                chave: 'principal', mes: prazo, tipo: 'principal',
+                vencimento: inicio ? addMonthsISO(inicio, prazo) : '',
+                base: totalAportado, valor: totalAportado,
+                pago: !!(pgP && pgP.pago), pago_em: pgP && pgP.data,
+            });
+            const totalJuros = parcelas.filter(p => p.tipo === 'juros').reduce((s, p) => s + p.valor, 0);
+            const totalAPagar = totalAportado + totalJuros;
+            const totalPago = parcelas.filter(p => p.pago).reduce((s, p) => s + p.valor, 0);
+            return { parcelas, totalAportado, totalJuros, totalAPagar, totalPago, saldo: Math.max(0, totalAPagar - totalPago) };
+        }
+        function empSaldo(em) { return empCronograma(em).saldo; }
+        function empJuros(em) { return empCronograma(em).totalJuros; }
 
         async function loadEmprestimos() {
             const [emps, forns, contas] = await Promise.all([
@@ -2748,7 +2798,7 @@
             contasCache = (contas || []).filter(c => c.ativo !== false);
 
             const ativos = emprestimosCache.filter(em => em.status !== 'cancelado');
-            const totalTomado = ativos.reduce((s, em) => s + parseFloat(em.valor_principal || 0), 0);
+            const totalTomado = ativos.reduce((s, em) => s + empCronograma(em).totalAportado, 0);
             const saldoTotal = ativos.filter(em => em.status !== 'quitado').reduce((s, em) => s + empSaldo(em), 0);
             const jurosTotal = ativos.reduce((s, em) => s + empJuros(em), 0);
 
@@ -2764,14 +2814,15 @@
         function renderEmprestimos() {
             document.getElementById('emprestimos-body').innerHTML = emprestimosCache.map(em => {
                 const st = EMPRESTIMO_STATUS[em.status] || EMPRESTIMO_STATUS.em_aberto;
+                const cr = empCronograma(em);
                 return `<tr class="clickable" onclick="openEmprestimoDetail('${em.id}')">
         <td><strong>${em.descricao || '—'}</strong></td>
         <td>${em.credor || em.fornecedores?.nome || '—'}</td>
         <td>${fmtDate(em.data_recebimento)}</td>
-        <td>${fmt(em.valor_principal)}</td>
-        <td style="color:var(--yellow,#eab308)">${fmt(empJuros(em))}</td>
-        <td>${fmt(em.valor_total || em.valor_principal)}</td>
-        <td style="color:${empSaldo(em) > 0 ? 'var(--red)' : 'var(--green)'};font-weight:600">${fmt(empSaldo(em))}</td>
+        <td>${fmt(cr.totalAportado)}</td>
+        <td style="color:var(--yellow,#eab308)">${fmt(cr.totalJuros)}</td>
+        <td>${fmt(cr.totalAPagar)}</td>
+        <td style="color:${cr.saldo > 0 ? 'var(--red)' : 'var(--green)'};font-weight:600">${fmt(cr.saldo)}</td>
         <td><span class="badge" style="background:${st.color}22;color:${st.color}">${st.label}</span></td>
         <td onclick="event.stopPropagation()"><div class="actions">
             <button class="btn-icon" onclick="editEmprestimo('${em.id}')" title="Editar"><i class="ri-edit-line"></i></button>
@@ -2784,38 +2835,61 @@
             const em = emprestimosCache.find(x => x.id === id);
             if (!em) return;
             const st = EMPRESTIMO_STATUS[em.status] || EMPRESTIMO_STATUS.em_aberto;
+            const cr = empCronograma(em);
             const el = document.getElementById('modal-content');
+            el.classList.add('wide');
+            const linhas = cr.parcelas.map(p => {
+                const venceu = p.vencimento && p.vencimento < hojeISO();
+                const corVenc = (!p.pago && venceu) ? 'var(--red)' : 'inherit';
+                const label = p.tipo === 'principal' ? '🏁 Devolução do principal' : `Mês ${p.mes} — juros sobre ${fmt(p.base)}`;
+                return `<tr>
+            <td style="color:${corVenc}">${label}</td>
+            <td style="color:${corVenc}">${p.vencimento ? fmtDate(p.vencimento) : '—'}</td>
+            <td style="font-weight:600">${fmt(p.valor)}</td>
+            <td>${p.pago ? '<span class="badge" style="background:#10b98122;color:#10b981">Pago' + (p.pago_em ? ' ' + fmtDate(p.pago_em) : '') + '</span>' : (venceu ? '<span class="badge" style="background:#ef444422;color:#ef4444">Vencida</span>' : '<span class="badge" style="background:#3b82f622;color:#3b82f6">A vencer</span>')}</td>
+            <td><button class="btn btn-sm ${p.pago ? 'btn-ghost' : 'btn-primary'}" onclick="marcarParcela('${em.id}','${p.chave}')">${p.pago ? 'Desfazer' : 'Marcar pago'}</button></td>
+        </tr>`;
+            }).join('');
             el.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:20px">
             <div>
                 <h3 style="margin-bottom:4px">${em.descricao || '—'}</h3>
-                <span style="font-size:12px;color:var(--text2)">${em.credor || em.fornecedores?.nome || ''} • recebido em ${fmtDate(em.data_recebimento)}</span>
+                <span style="font-size:12px;color:var(--text2)">${em.credor || em.fornecedores?.nome || ''} • início ${fmtDate(em.data_recebimento)} • ${em.taxa_juros || 0}% ${em.tipo_juros || 'mensal'} • ${em.prazo_meses || cr.parcelas.length - 1} meses</span>
             </div>
             <button class="btn btn-sm btn-ghost" onclick="closeModal()">Fechar</button>
         </div>
-        <div style="text-align:center;padding:20px 0 24px;border-bottom:1px solid var(--border);margin-bottom:20px">
+        <div style="text-align:center;padding:16px 0 20px;border-bottom:1px solid var(--border);margin-bottom:16px">
             <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:8px">Saldo Devedor</div>
-            <div style="font-size:36px;font-weight:700;color:${empSaldo(em) > 0 ? 'var(--red)' : 'var(--green)'};letter-spacing:-1px">${fmt(empSaldo(em))}</div>
+            <div style="font-size:34px;font-weight:700;color:${cr.saldo > 0 ? 'var(--red)' : 'var(--green)'};letter-spacing:-1px">${fmt(cr.saldo)}</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:6px">Aportado ${fmt(cr.totalAportado)} • Juros ${fmt(cr.totalJuros)} • Total a pagar ${fmt(cr.totalAPagar)} • Já pago ${fmt(cr.totalPago)}</div>
         </div>
-        <div class="lead-detail">
-            <div class="field"><div class="field-label">Status</div><div class="field-value"><span class="badge" style="background:${st.color}22;color:${st.color}">${st.label}</span></div></div>
-            <div class="field"><div class="field-label">Credor</div><div class="field-value">${em.credor || em.fornecedores?.nome || '—'}</div></div>
-            <div class="field"><div class="field-label">Valor recebido (principal)</div><div class="field-value">${fmt(em.valor_principal)}</div></div>
-            <div class="field"><div class="field-label">Total a pagar</div><div class="field-value">${fmt(em.valor_total || em.valor_principal)}</div></div>
-            <div class="field"><div class="field-label">Juros totais</div><div class="field-value">${fmt(empJuros(em))}</div></div>
-            <div class="field"><div class="field-label">Taxa de juros</div><div class="field-value">${em.taxa_juros ? em.taxa_juros + '% ' + (em.tipo_juros || '') : '—'}</div></div>
-            <div class="field"><div class="field-label">Parcelas</div><div class="field-value">${em.num_parcelas || 1}x de ${fmt(em.valor_parcela)}</div></div>
-            <div class="field"><div class="field-label">Já pago</div><div class="field-value">${fmt(em.valor_pago)}</div></div>
-            <div class="field"><div class="field-label">Recebido em</div><div class="field-value">${fmtDate(em.data_recebimento)}</div></div>
-            <div class="field"><div class="field-label">1ª parcela</div><div class="field-value">${em.data_primeira_parcela ? fmtDate(em.data_primeira_parcela) : '—'}</div></div>
-            <div class="field"><div class="field-label">Conta / Destino</div><div class="field-value">${em.contas_bancarias?.nome || '—'}</div></div>
-            ${em.notas ? '<div class="field full"><div class="field-label">Notas</div><div class="field-value" style="white-space:pre-wrap">' + em.notas + '</div></div>' : ''}
-        </div>
-        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:8px">Cronograma de Pagamentos</div>
+        <table style="margin-bottom:16px">
+            <thead><tr><th>Parcela</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Ação</th></tr></thead>
+            <tbody>${linhas}</tbody>
+        </table>
+        ${em.notas ? '<div style="font-size:13px;color:var(--text2);margin-bottom:12px"><strong>Notas:</strong> ' + em.notas + '</div>' : ''}
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between">
             <button class="btn btn-primary" onclick="editEmprestimo('${em.id}')"><i class="ri-edit-line"></i> Editar</button>
             <button class="btn btn-danger" onclick="deleteEmprestimo('${em.id}','${(em.descricao || '').replace(/'/g, '')}');closeModal()"><i class="ri-delete-bin-line"></i> Excluir empréstimo</button>
         </div>`;
             document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        // Marca/desmarca uma parcela de juros (chave = nº do mês) ou a devolução do principal (chave = 'principal') como paga.
+        async function marcarParcela(emId, chave) {
+            const em = emprestimosCache.find(x => x.id === emId);
+            if (!em) return;
+            const pagamentos = { ...(em.pagamentos || {}) };
+            if (pagamentos[chave] && pagamentos[chave].pago) {
+                delete pagamentos[chave];
+            } else {
+                pagamentos[chave] = { pago: true, data: hojeISO() };
+            }
+            await api('/api/emprestimos/' + emId, { method: 'PATCH', body: { pagamentos } });
+            em.pagamentos = pagamentos; // atualiza cache local p/ reabrir já refletido
+            await loadEmprestimos();
+            openEmprestimoDetail(emId);
         }
 
         function modalEmprestimo() { return emprestimoForm(null); }
@@ -2825,6 +2899,19 @@
             if (!em) return;
             document.getElementById('modal-content').innerHTML = emprestimoForm(em);
             document.getElementById('modal-overlay').classList.add('active');
+            recalcEmprestimoPreview();
+        }
+
+        function aporteRowHTML(a) {
+            a = a || {};
+            return `<div class="aporte-row" style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
+        <input type="date" class="ap-data" value="${a.data || ''}" style="flex:1">
+        <input type="number" step="0.01" class="ap-valor" value="${a.valor || ''}" placeholder="Valor R$" style="flex:1">
+        <button type="button" class="btn-icon danger" onclick="this.closest('.aporte-row').remove();recalcEmprestimoPreview()" title="Remover"><i class="ri-close-line"></i></button>
+    </div>`;
+        }
+        function addAporteRow() {
+            document.getElementById('aportes-list').insertAdjacentHTML('beforeend', aporteRowHTML());
         }
 
         function emprestimoForm(em) {
@@ -2836,16 +2923,38 @@
             const statusOpts = Object.entries(EMPRESTIMO_STATUS).map(([k, v]) => `<option value="${k}" ${sel(k, em.status || 'em_aberto')}>${v.label}</option>`).join('');
             const tjOpts = ['mensal', 'anual'].map(p => `<option value="${p}" ${sel(p, em.tipo_juros || 'mensal')}>${p[0].toUpperCase() + p.slice(1)}</option>`).join('');
             const isEdit = !!em.id;
+            const aportes = (em.aportes && em.aportes.length) ? em.aportes : [{}];
             return `<h3>${isEdit ? 'Editar' : 'Novo'} Empréstimo</h3><form onsubmit="saveEmprestimo(event${isEdit ? ",'" + em.id + "'" : ''})">
     <div class="form-group"><label>Descrição *</label><input name="descricao" required value="${esc(em.descricao)}" placeholder="Ex: Capital de giro Banco X"></div>
     <div class="form-row"><div class="form-group"><label>Credor (de quem)</label><input name="credor" value="${esc(em.credor)}" placeholder="Banco, sócio..."></div><div class="form-group"><label>Fornecedor vinculado</label><select name="fornecedor_id"><option value="">—</option>${fornOpts}</select></div></div>
-    <div class="form-row"><div class="form-group"><label>Valor recebido (R$) *</label><input name="valor_principal" type="number" step="0.01" required value="${em.valor_principal || ''}"></div><div class="form-group"><label>Dia que recebeu *</label><input name="data_recebimento" type="date" required value="${em.data_recebimento || ''}"></div></div>
-    <div class="form-row"><div class="form-group"><label>Taxa de juros (%)</label><input name="taxa_juros" type="number" step="0.01" value="${em.taxa_juros || ''}"></div><div class="form-group"><label>Período dos juros</label><select name="tipo_juros">${tjOpts}</select></div></div>
-    <div class="form-row"><div class="form-group"><label>Total a pagar (R$)</label><input name="valor_total" type="number" step="0.01" value="${em.valor_total || ''}" placeholder="principal + juros"></div><div class="form-group"><label>Nº de parcelas</label><input name="num_parcelas" type="number" min="1" value="${em.num_parcelas || 1}"></div></div>
-    <div class="form-row"><div class="form-group"><label>Valor já pago (R$)</label><input name="valor_pago" type="number" step="0.01" value="${em.valor_pago || ''}"></div><div class="form-group"><label>Status</label><select name="status">${statusOpts}</select></div></div>
-    <div class="form-row"><div class="form-group"><label>1ª parcela</label><input name="data_primeira_parcela" type="date" value="${em.data_primeira_parcela || ''}"></div><div class="form-group"><label>Conta / Destino</label><select name="conta_id"><option value="">—</option>${contaOpts}</select></div></div>
+    <div class="form-row"><div class="form-group"><label>Total contratado (R$)</label><input name="valor_principal" type="number" step="0.01" value="${em.valor_principal || ''}" placeholder="Ex: 28000" oninput="recalcEmprestimoPreview()"></div><div class="form-group"><label>Início (1º aporte) *</label><input name="data_recebimento" type="date" required value="${em.data_recebimento || ''}" oninput="recalcEmprestimoPreview()"></div></div>
+    <div class="form-row"><div class="form-group"><label>Taxa de juros (%)</label><input name="taxa_juros" type="number" step="0.01" value="${em.taxa_juros || ''}" oninput="recalcEmprestimoPreview()"></div><div class="form-group"><label>Período</label><select name="tipo_juros">${tjOpts}</select></div></div>
+    <div class="form-row"><div class="form-group"><label>Prazo p/ devolver principal (meses)</label><input name="prazo_meses" type="number" min="1" value="${em.prazo_meses || 6}" oninput="recalcEmprestimoPreview()"></div><div class="form-group"><label>Status</label><select name="status">${statusOpts}</select></div></div>
+    <div class="form-group"><label>💸 Aportes (dinheiro liberado pelo credor)</label>
+        <div id="aportes-list">${aportes.map(aporteRowHTML).join('')}</div>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="addAporteRow()"><i class="ri-add-line"></i> Adicionar aporte</button>
+    </div>
+    <div class="form-group"><label>Conta / Destino</label><select name="conta_id"><option value="">—</option>${contaOpts}</select></div>
+    <div id="emp-preview" style="font-size:12px;color:var(--text2);margin:8px 0;padding:10px;background:var(--bg2,#1a1a1a);border-radius:8px"></div>
     <div class="form-group"><label>Notas</label><textarea name="notas" rows="2">${esc(em.notas)}</textarea></div>
     <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button id="emp-submit-btn" type="submit" class="btn btn-primary">${isEdit ? 'Atualizar' : 'Salvar'}</button></div></form>`;
+        }
+
+        // Lê os campos atuais do form e devolve um objeto-empréstimo p/ empCronograma()
+        function emprestimoFromForm() {
+            const aportes = [...document.querySelectorAll('#aportes-list .aporte-row')].map(r => ({
+                data: r.querySelector('.ap-data').value,
+                valor: parseFloat(r.querySelector('.ap-valor').value) || 0,
+            })).filter(a => a.valor > 0);
+            const g = n => document.querySelector(`[name="${n}"]`)?.value;
+            return { aportes, valor_principal: g('valor_principal'), data_recebimento: g('data_recebimento'), taxa_juros: g('taxa_juros'), prazo_meses: g('prazo_meses'), pagamentos: {} };
+        }
+        function recalcEmprestimoPreview() {
+            const el = document.getElementById('emp-preview');
+            if (!el) return;
+            const cr = empCronograma(emprestimoFromForm());
+            const previa = cr.parcelas.filter(p => p.tipo === 'juros').slice(0, 8).map(p => fmt(p.valor)).join(' · ');
+            el.innerHTML = `<strong>Prévia:</strong> aportado ${fmt(cr.totalAportado)} • juros totais ${fmt(cr.totalJuros)} • total a pagar ${fmt(cr.totalAPagar)}<br>Parcelas de juros: ${previa || '—'} <span style="opacity:.7">+ devolução ${fmt(cr.totalAportado)} no vencimento</span>`;
         }
 
         async function saveEmprestimo(e, id) {
@@ -2854,26 +2963,31 @@
             const btn = document.getElementById('emp-submit-btn');
             btn.disabled = true; btn.textContent = 'Salvando...';
             try {
-                const principal = parseFloat(f.valor_principal.value) || 0;
-                const total = parseFloat(f.valor_total.value) || principal;
-                const nParc = parseInt(f.num_parcelas.value) || 1;
+                const aportes = [...document.querySelectorAll('#aportes-list .aporte-row')].map(r => ({
+                    data: r.querySelector('.ap-data').value || f.data_recebimento.value,
+                    valor: parseFloat(r.querySelector('.ap-valor').value) || 0,
+                })).filter(a => a.valor > 0);
+                const prazo = parseInt(f.prazo_meses.value) || 6;
+                const totalContratado = parseFloat(f.valor_principal.value) || aportes.reduce((s, a) => s + a.valor, 0);
                 const payload = {
                     descricao: f.descricao.value,
                     credor: f.credor.value || null,
                     fornecedor_id: f.fornecedor_id.value || null,
                     conta_id: f.conta_id.value || null,
-                    valor_principal: principal,
+                    valor_principal: totalContratado,
                     data_recebimento: f.data_recebimento.value,
                     taxa_juros: parseFloat(f.taxa_juros.value) || 0,
                     tipo_juros: f.tipo_juros.value,
-                    num_parcelas: nParc,
-                    valor_total: total,
-                    valor_parcela: nParc > 0 ? Math.round((total / nParc) * 100) / 100 : total,
-                    valor_pago: parseFloat(f.valor_pago.value) || 0,
-                    data_primeira_parcela: f.data_primeira_parcela.value || null,
+                    prazo_meses: prazo,
+                    aportes,
                     status: f.status.value,
                     notas: f.notas.value || null,
                 };
+                // Campos derivados (mantém colunas antigas coerentes; não editáveis na UI)
+                const cr = empCronograma(payload);
+                payload.num_parcelas = prazo;
+                payload.valor_total = Math.round(cr.totalAPagar * 100) / 100;
+                payload.valor_parcela = prazo > 0 ? Math.round((cr.totalJuros / prazo) * 100) / 100 : cr.totalJuros;
                 if (id) await api('/api/emprestimos/' + id, { method: 'PATCH', body: payload });
                 else await api('/api/emprestimos', { method: 'POST', body: payload });
                 closeModal(); loadEmprestimos();
@@ -3207,6 +3321,7 @@
             else if (type === 'user') el.innerHTML = modalUser();
             document.getElementById('modal-overlay').classList.add('active');
             if (type === 'lead') setupPhoneMask();
+            if (type === 'emprestimo') recalcEmprestimoPreview();
         }
         function closeModal() {
             document.getElementById('modal-overlay').classList.remove('active');
