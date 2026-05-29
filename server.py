@@ -4,6 +4,7 @@ sys.stderr.reconfigure(encoding='utf-8')
 
 import os
 import json
+import hmac
 import secrets
 import requests
 import re
@@ -235,15 +236,65 @@ def role_can_write(f):
 # SECURITY: Headers
 # ============================================================
 
+# Origem do Supabase liberada no CSP p/ imagens/links de anexos (URL assinada).
+_SUPABASE_ORIGIN = SUPABASE_URL if SUPABASE_URL.startswith("http") else ""
+_CSP = (
+    "default-src 'self'; "
+    # JS e CSS são inline (onclick, <style>, template literals) — 'unsafe-inline' é obrigatório aqui.
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+    "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net data:; "
+    f"img-src 'self' data: {_SUPABASE_ORIGIN}; "
+    f"connect-src 'self' {_SUPABASE_ORIGIN}; "
+    "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+).strip()
+
+
 @app.after_request
 def set_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['X-XSS-Protection'] = '1; mode=block'
+    # X-XSS-Protection é obsoleto e pode introduzir bugs; recomendação atual é 0 + CSP.
+    response.headers['X-XSS-Protection'] = '0'
+    response.headers['Content-Security-Policy'] = _CSP
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     if os.getenv("FLASK_ENV") == "production":
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    # Garante o cookie CSRF (double-submit) — legível pelo JS, comparado no header.
+    if not request.cookies.get("csrf_token"):
+        response.set_cookie(
+            "csrf_token",
+            secrets.token_urlsafe(32),
+            secure=(os.getenv("FLASK_ENV") == "production"),
+            httponly=False,   # precisa ser lido pelo JS p/ reenviar no header
+            samesite="Lax",
+            max_age=60 * 60 * 24 * 7,
+        )
     return response
+
+
+@app.before_request
+def csrf_protect():
+    """CSRF double-submit: escrita em /api/* exige header X-CSRF-Token igual ao
+    cookie csrf_token. Webhooks (auth própria por secret) e login (form) ficam de fora."""
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return
+    if not request.path.startswith("/api/"):
+        return
+    cookie = request.cookies.get("csrf_token", "")
+    header = request.headers.get("X-CSRF-Token", "")
+    if not cookie or not header or not hmac.compare_digest(cookie, header):
+        return jsonify({"error": "Token CSRF inválido — recarregue a página"}), 403
+
+
+def erro_senha_fraca(senha):
+    """Retorna mensagem de erro se a senha não atende à política, senão None.
+    Política: mínimo 8 caracteres, com pelo menos uma letra e um número."""
+    if not senha or len(senha) < 8:
+        return "A senha deve ter pelo menos 8 caracteres"
+    if not re.search(r"[A-Za-z]", senha) or not re.search(r"\d", senha):
+        return "A senha deve conter letras e números"
+    return None
 
 
 # ============================================================
@@ -1361,8 +1412,9 @@ def api_create_user():
         return jsonify({"error": "DB offline"}), 503
     data = request.json
     password = data.pop("password", None)
-    if not password or len(password) < 6:
-        return jsonify({"error": "Senha deve ter pelo menos 6 caracteres"}), 400
+    erro = erro_senha_fraca(password)
+    if erro:
+        return jsonify({"error": erro}), 400
 
     data["password_hash"] = generate_password_hash(password)
     try:
@@ -1392,8 +1444,9 @@ def api_update_user(user_id):
 
     new_password = data.get("password")
     if new_password:
-        if len(new_password) < 6:
-            return jsonify({"error": "Senha deve ter pelo menos 6 caracteres"}), 400
+        erro = erro_senha_fraca(new_password)
+        if erro:
+            return jsonify({"error": erro}), 400
         updates["password_hash"] = generate_password_hash(new_password)
 
     if not updates:
@@ -1439,8 +1492,9 @@ def api_change_my_password():
     data = request.json or {}
     current = data.get("current_password", "")
     nova = data.get("new_password", "")
-    if len(nova) < 6:
-        return jsonify({"error": "Nova senha deve ter pelo menos 6 caracteres"}), 400
+    erro = erro_senha_fraca(nova)
+    if erro:
+        return jsonify({"error": erro}), 400
 
     uid = session.get("user_id")
     try:
@@ -2913,7 +2967,7 @@ def webhook_telegram():
         print("⚠️ webhook_telegram: TELEGRAM_WEBHOOK_SECRET nao configurado")
         return jsonify({"error": "webhook nao configurado"}), 503
 
-    if request.headers.get("X-Telegram-Bot-Api-Secret-Token", "") != TELEGRAM_WEBHOOK_SECRET:
+    if not hmac.compare_digest(request.headers.get("X-Telegram-Bot-Api-Secret-Token", ""), TELEGRAM_WEBHOOK_SECRET):
         print(f"🚫 webhook_telegram: secret invalido de {request.remote_addr}")
         return jsonify({"error": "nao autorizado"}), 401
 
