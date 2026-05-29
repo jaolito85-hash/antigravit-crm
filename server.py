@@ -473,7 +473,7 @@ def api_tarefas():
         return jsonify([])
     try:
         result = supabase.table("tarefas").select(
-            "*, leads(nome, status)"
+            "*, leads(nome, status, cidade, estado)"
         ).order("data_vencimento").execute()
         return jsonify(result.data or [])
     except Exception as e:

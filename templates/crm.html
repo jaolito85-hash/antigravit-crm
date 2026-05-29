@@ -754,21 +754,118 @@
         .inbox-empty { text-align: center; padding: 40px 20px; color: var(--text2); font-size: 13px }
         .badge-count { background: var(--primary); color: #fff; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 999px; margin-left: auto; min-width: 18px; text-align: center; line-height: 1.4 }
 
-        /* TAREFAS V2: 4 colunas por status + filtros */
-        .kanban-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 14px }
-        .kanban-col-header.col-aberta { color: #cbd5e1 }
-        .kanban-col-header.col-em_andamento { color: var(--yellow) }
-        .kanban-col-header.col-aguardando { color: var(--blue) }
-        .kanban-col-header.col-concluida { color: var(--green) }
-        .kanban-card .pill { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); margin-right: 4px }
-        .kanban-card .pill.alta { color: var(--red); border-color: rgba(239,68,68,.3) }
-        .kanban-card .pill.media { color: var(--yellow); border-color: rgba(245,158,11,.3) }
-        .kanban-card .pill.baixa { color: var(--text2) }
-        .kanban-card.overdue { border-color: rgba(239,68,68,.4) }
-        .kanban-card .overdue-flag { color: var(--red); font-weight: 600 }
-        .task-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px }
-        .task-filters select, .task-filters input { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 8px; font-size: 12px; font-family: inherit }
-        .task-filters input { min-width: 200px }
+        /* ============================================================
+           TAREFAS V2 — Kanban premium (redesign)
+           ============================================================ */
+
+        /* Header da aba */
+        .tk-header { align-items: flex-start }
+        .tk-title { display: flex; align-items: center; gap: 14px }
+        .tk-title-icon { width: 46px; height: 46px; border-radius: 13px; background: linear-gradient(135deg, var(--primary), #8b5cf6); display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff; box-shadow: 0 8px 22px -8px rgba(99, 102, 241, .8); flex-shrink: 0 }
+        .tk-header-actions { display: flex; gap: 10px; align-items: center }
+        .tk-bell { position: relative; width: 40px; height: 40px; border-radius: 11px; border: 1px solid var(--border); background: var(--surface); color: var(--text2); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px; transition: .15s }
+        .tk-bell:hover { color: var(--text); border-color: var(--border2) }
+        .tk-bell .dot { position: absolute; top: -6px; right: -6px; background: var(--red); color: #fff; font-size: 10px; font-weight: 700; min-width: 18px; height: 18px; border-radius: 999px; display: none; align-items: center; justify-content: center; padding: 0 4px; border: 2px solid var(--bg); line-height: 1 }
+
+        /* Toolbar: busca + filtros */
+        .tk-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 20px }
+        .tk-search { position: relative; flex: 1; min-width: 240px }
+        .tk-search > i { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text2); font-size: 16px; pointer-events: none }
+        .tk-search input { width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 11px 56px 11px 40px; border-radius: 11px; font-size: 13px; font-family: inherit; transition: .15s }
+        .tk-search input::placeholder { color: var(--text2) }
+        .tk-search input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-glow) }
+        .tk-search kbd { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-family: inherit; font-size: 10px; color: var(--text2); background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; pointer-events: none }
+        .tk-select { position: relative }
+        .tk-select select { -webkit-appearance: none; appearance: none; background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 11px 34px 11px 14px; border-radius: 11px; font-size: 12.5px; font-family: inherit; cursor: pointer; transition: .15s }
+        .tk-select select:hover { border-color: var(--border2) }
+        .tk-select select:focus { outline: none; border-color: var(--primary) }
+        .tk-select::after { content: ''; position: absolute; right: 14px; top: 50%; width: 7px; height: 7px; border-right: 2px solid var(--text2); border-bottom: 2px solid var(--text2); transform: translateY(-70%) rotate(45deg); pointer-events: none }
+        .tk-clear { background: var(--surface); border: 1px solid var(--border); color: var(--text2); padding: 11px 14px; border-radius: 11px; font-size: 12.5px; font-family: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: .15s }
+        .tk-clear:hover { border-color: var(--border2); color: var(--text) }
+
+        /* Stat cards da aba */
+        .tk-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 22px }
+        .tk-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; display: flex; gap: 14px; align-items: flex-start; transition: .2s }
+        .tk-stat:hover { border-color: var(--border2); transform: translateY(-2px) }
+        .tk-stat-ico { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 21px; flex-shrink: 0 }
+        .tk-stat-body { min-width: 0 }
+        .tk-stat-label { font-size: 12px; color: var(--text2); font-weight: 500 }
+        .tk-stat-value { font-size: 28px; font-weight: 700; letter-spacing: -1px; line-height: 1.15; margin: 2px 0 }
+        .tk-stat-sub { font-size: 11px; color: var(--text2) }
+        .ico-indigo { background: rgba(99, 102, 241, .14); color: #818cf8 }
+        .ico-red { background: rgba(239, 68, 68, .14); color: #f87171 }
+        .ico-amber { background: rgba(245, 158, 11, .14); color: #fbbf24 }
+        .ico-blue { background: rgba(56, 189, 248, .14); color: #38bdf8 }
+        .ico-green { background: rgba(16, 185, 129, .14); color: #34d399 }
+
+        /* Kanban grid + colunas */
+        .kanban-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 0; align-items: start }
+        .kanban-col { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; display: flex; flex-direction: column; min-height: 200px }
+        .kanban-col-header { padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; display: flex; justify-content: space-between; align-items: center }
+        .kanban-col-header .kc-title { display: flex; align-items: center; gap: 9px }
+        .kanban-col-header .kc-ico { width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px }
+        .kanban-col-header .count { background: rgba(255, 255, 255, .07); padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--text); letter-spacing: 0; text-transform: none }
+        .col-aberta { color: #c7d2fe }
+        .col-em_andamento { color: var(--yellow) }
+        .col-aguardando { color: #7dd3fc }
+        .col-concluida { color: var(--green) }
+        .col-aberta .kc-ico { background: rgba(99, 102, 241, .16); color: #818cf8 }
+        .col-em_andamento .kc-ico { background: rgba(245, 158, 11, .16); color: #fbbf24 }
+        .col-aguardando .kc-ico { background: rgba(56, 189, 248, .16); color: #38bdf8 }
+        .col-concluida .kc-ico { background: rgba(16, 185, 129, .16); color: #34d399 }
+        .kanban-cards { padding: 12px; display: flex; flex-direction: column; gap: 10px }
+        .kanban-empty { text-align: center; color: #555; font-size: 12px; padding: 26px 8px; border: 1px dashed var(--border); border-radius: 12px }
+
+        /* Card */
+        .kanban-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin: 0; cursor: pointer; position: relative; transition: transform .15s, border-color .15s, box-shadow .15s }
+        .kanban-card:hover { border-color: var(--border2); transform: translateY(-2px); box-shadow: 0 12px 26px -14px rgba(0, 0, 0, .7) }
+        .kanban-card.overdue { border-color: rgba(239, 68, 68, .4) }
+        .kanban-card.overdue::before { content: ''; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 0 3px 3px 0; background: var(--red) }
+        .kanban-card h4 { font-size: 13.5px; font-weight: 600; line-height: 1.4; margin-bottom: 10px; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden }
+
+        /* Pills */
+        .kanban-card .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px }
+        .kanban-card .pill { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); color: var(--text2); line-height: 1.5 }
+        .kanban-card .pill.alta { color: #f87171; background: rgba(239, 68, 68, .13); border-color: rgba(239, 68, 68, .28) }
+        .kanban-card .pill.media { color: #fbbf24; background: rgba(245, 158, 11, .13); border-color: rgba(245, 158, 11, .28) }
+        .kanban-card .pill.baixa { color: #94a3b8; background: rgba(148, 163, 184, .1); border-color: rgba(148, 163, 184, .22) }
+        .kanban-card .pill-canal i { font-size: 12px }
+
+        /* Meta rows */
+        .kanban-card .meta { font-size: 12px; color: var(--text2); display: flex; gap: 8px; align-items: center; justify-content: space-between }
+        .kanban-card .meta-resp { display: flex; align-items: center; gap: 7px; min-width: 0 }
+        .kanban-card .meta-resp .av { width: 22px; height: 22px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), #8b5cf6); color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0 }
+        .kanban-card .meta-resp span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+        .kanban-card .meta-date { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0 }
+        .kanban-card .meta-date.overdue-flag { color: #f87171; font-weight: 600 }
+        .kanban-card .meta-loc { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); margin-top: 9px }
+        .kanban-card .meta-loc i, .kanban-card .meta-date i { font-size: 13px; opacity: .85 }
+
+        /* Progress (CSS pronto; renderiza só quando houver dado real) */
+        .kanban-card .tk-progress { margin-top: 11px }
+        .kanban-card .tk-progress-track { height: 5px; background: rgba(255, 255, 255, .07); border-radius: 3px; overflow: hidden }
+        .kanban-card .tk-progress-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #f59e0b, #fbbf24) }
+        .kanban-card .tk-progress-label { font-size: 10.5px; color: var(--text2); text-align: right; margin-top: 4px }
+
+        /* Footer contextual */
+        .kanban-card .tk-foot { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 11.5px; display: flex; align-items: center; gap: 6px }
+        .kanban-card .tk-foot.wait { color: #7dd3fc }
+        .kanban-card .tk-foot.done { color: #34d399 }
+
+        /* Ver mais / ver menos */
+        .kanban-more { margin-top: 2px; text-align: center; background: transparent; border: 1px dashed var(--border); color: var(--text2); border-radius: 10px; padding: 9px; font-size: 12px; font-weight: 500; font-family: inherit; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: .15s }
+        .kanban-more:hover { border-color: var(--border2); color: var(--text); background: rgba(255, 255, 255, .02) }
+
+        /* entrada com stagger */
+        @keyframes tkCardIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+        .kanban-card { animation: tkCardIn .28s ease-out both }
+
+        @media (max-width: 1200px) { .tk-stats { grid-template-columns: repeat(2, 1fr) } }
+        @media (max-width: 980px) { .kanban-4 { grid-template-columns: 1fr 1fr } }
+        @media (prefers-reduced-motion: reduce) {
+            .kanban-card { animation: none }
+            .kanban-card:hover, .tk-stat:hover { transform: none }
+        }
 
         /* MODAL WIDE (detalhe) */
         .modal.wide { max-width: 720px }
@@ -987,49 +1084,133 @@
 
         <!-- ===== TAREFAS ===== -->
         <div class="view" id="view-tarefas">
-            <div class="page-header">
-                <div>
-                    <h1>Tarefas</h1>
-                    <p>Clique em uma tarefa para abrir o detalhe e mover de status.</p>
-                </div><button class="btn btn-primary" onclick="openModal('tarefa')"><i class="ri-add-line"></i>Nova
-                    Tarefa</button>
+            <div class="page-header tk-header">
+                <div class="tk-title">
+                    <div class="tk-title-icon"><i class="ri-survey-line"></i></div>
+                    <div>
+                        <h1>Tarefas</h1>
+                        <p>Gerencie e acompanhe todas as atividades do seu time comercial.</p>
+                    </div>
+                </div>
+                <div class="tk-header-actions">
+                    <button class="btn btn-ghost" onclick="exportTarefas()"><i class="ri-upload-2-line"></i> Exportar</button>
+                    <button class="tk-bell" title="Ir para a Caixa de Entrada" onclick="document.querySelector('.nav-item[data-view=caixa]').click()"><i class="ri-notification-3-line"></i><span class="dot" id="tk-bell-count">0</span></button>
+                    <button class="btn btn-primary" onclick="openModal('tarefa')"><i class="ri-add-line"></i> Nova Tarefa</button>
+                </div>
             </div>
-            <div class="task-filters">
-                <input type="text" id="tarefa-search" placeholder="🔍 Buscar por título ou descrição" oninput="renderTarefas()">
-                <select id="tarefa-resp" onchange="renderTarefas()">
-                    <option value="">Todos responsáveis</option>
-                    <option value="Joao">João</option>
-                    <option value="Guilherme">Guilherme</option>
-                    <option value="Marcos">Marcos</option>
-                </select>
-                <select id="tarefa-prio" onchange="renderTarefas()">
-                    <option value="">Todas prioridades</option>
-                    <option value="alta">Alta</option>
-                    <option value="media">Média</option>
-                    <option value="baixa">Baixa</option>
-                </select>
-                <select id="tarefa-prazo" onchange="renderTarefas()">
-                    <option value="">Qualquer prazo</option>
-                    <option value="overdue">Atrasadas</option>
-                    <option value="today">Hoje</option>
-                    <option value="week">Esta semana</option>
-                </select>
+            <div class="tk-toolbar">
+                <div class="tk-search">
+                    <i class="ri-search-line"></i>
+                    <input type="text" id="tarefa-search" placeholder="Buscar por tarefa, responsável, cidade ou empresa..." oninput="renderTarefas()">
+                    <kbd>Ctrl K</kbd>
+                </div>
+                <div class="tk-select">
+                    <select id="tarefa-resp" onchange="renderTarefas()">
+                        <option value="">Todos responsáveis</option>
+                        <option value="Joao">João</option>
+                        <option value="Guilherme">Guilherme</option>
+                        <option value="Marcos">Marcos</option>
+                    </select>
+                </div>
+                <div class="tk-select">
+                    <select id="tarefa-prio" onchange="renderTarefas()">
+                        <option value="">Todas prioridades</option>
+                        <option value="alta">Alta</option>
+                        <option value="media">Média</option>
+                        <option value="baixa">Baixa</option>
+                    </select>
+                </div>
+                <div class="tk-select">
+                    <select id="tarefa-tipo" onchange="renderTarefas()">
+                        <option value="">Todos os tipos</option>
+                        <option value="ligacao">Telefone</option>
+                        <option value="email">E-mail</option>
+                        <option value="reuniao">Reunião</option>
+                        <option value="visita">Visita</option>
+                        <option value="demo">Demo</option>
+                        <option value="proposta">Proposta</option>
+                        <option value="outro">Outro</option>
+                    </select>
+                </div>
+                <div class="tk-select">
+                    <select id="tarefa-prazo" onchange="renderTarefas()">
+                        <option value="">Qualquer prazo</option>
+                        <option value="overdue">Atrasadas</option>
+                        <option value="today">Hoje</option>
+                        <option value="week">Esta semana</option>
+                    </select>
+                </div>
+                <button class="tk-clear" onclick="clearTarefaFilters()"><i class="ri-filter-3-line"></i> Limpar</button>
+            </div>
+            <div class="tk-stats">
+                <div class="tk-stat">
+                    <div class="tk-stat-ico ico-indigo"><i class="ri-list-check-2"></i></div>
+                    <div class="tk-stat-body">
+                        <div class="tk-stat-label">Total de tarefas</div>
+                        <div class="tk-stat-value" id="tk-stat-total">0</div>
+                        <div class="tk-stat-sub">Todas as etapas</div>
+                    </div>
+                </div>
+                <div class="tk-stat">
+                    <div class="tk-stat-ico ico-red"><i class="ri-alarm-warning-line"></i></div>
+                    <div class="tk-stat-body">
+                        <div class="tk-stat-label">Atrasadas</div>
+                        <div class="tk-stat-value" id="tk-stat-atrasadas">0</div>
+                        <div class="tk-stat-sub">Requerem atenção</div>
+                    </div>
+                </div>
+                <div class="tk-stat">
+                    <div class="tk-stat-ico ico-amber"><i class="ri-loader-4-line"></i></div>
+                    <div class="tk-stat-body">
+                        <div class="tk-stat-label">Em andamento</div>
+                        <div class="tk-stat-value" id="tk-stat-andamento">0</div>
+                        <div class="tk-stat-sub">Em progresso</div>
+                    </div>
+                </div>
+                <div class="tk-stat">
+                    <div class="tk-stat-ico ico-blue"><i class="ri-hourglass-line"></i></div>
+                    <div class="tk-stat-body">
+                        <div class="tk-stat-label">Aguardando</div>
+                        <div class="tk-stat-value" id="tk-stat-aguardando">0</div>
+                        <div class="tk-stat-sub">Dependem de terceiros</div>
+                    </div>
+                </div>
+                <div class="tk-stat">
+                    <div class="tk-stat-ico ico-green"><i class="ri-checkbox-circle-line"></i></div>
+                    <div class="tk-stat-body">
+                        <div class="tk-stat-label">Concluídas hoje</div>
+                        <div class="tk-stat-value" id="tk-stat-hoje">0</div>
+                        <div class="tk-stat-sub">Ótimo desempenho</div>
+                    </div>
+                </div>
             </div>
             <div class="kanban-4">
                 <div class="kanban-col">
-                    <div class="kanban-col-header col-aberta">📋 A Fazer <span class="count" id="count-aberta">0</span></div>
+                    <div class="kanban-col-header col-aberta">
+                        <span class="kc-title"><span class="kc-ico"><i class="ri-survey-line"></i></span> A Fazer</span>
+                        <span class="count" id="count-aberta">0</span>
+                    </div>
                     <div class="kanban-cards" id="kanban-aberta"></div>
                 </div>
                 <div class="kanban-col">
-                    <div class="kanban-col-header col-em_andamento">🔄 Em Andamento <span class="count" id="count-em_andamento">0</span></div>
+                    <div class="kanban-col-header col-em_andamento">
+                        <span class="kc-title"><span class="kc-ico"><i class="ri-pulse-line"></i></span> Em Andamento</span>
+                        <span class="count" id="count-em_andamento">0</span>
+                    </div>
                     <div class="kanban-cards" id="kanban-em_andamento"></div>
                 </div>
                 <div class="kanban-col">
-                    <div class="kanban-col-header col-aguardando">⏳ Aguardando <span class="count" id="count-aguardando">0</span></div>
+                    <div class="kanban-col-header col-aguardando">
+                        <span class="kc-title"><span class="kc-ico"><i class="ri-hourglass-line"></i></span> Aguardando</span>
+                        <span class="count" id="count-aguardando">0</span>
+                    </div>
                     <div class="kanban-cards" id="kanban-aguardando"></div>
                 </div>
                 <div class="kanban-col">
-                    <div class="kanban-col-header col-concluida">✅ Concluído <span class="count" id="count-concluida">0</span></div>
+                    <div class="kanban-col-header col-concluida">
+                        <span class="kc-title"><span class="kc-ico"><i class="ri-checkbox-circle-line"></i></span> Concluído</span>
+                        <span class="count" id="count-concluida">0</span>
+                    </div>
                     <div class="kanban-cards" id="kanban-concluida"></div>
                 </div>
             </div>
@@ -1552,6 +1733,46 @@
 
         const STATUS_LABEL = { aberta: 'A Fazer', em_andamento: 'Em Andamento', aguardando: 'Aguardando', concluida: 'Concluído', cancelada: 'Cancelada' };
         const STATUS_ORDER = ['aberta', 'em_andamento', 'aguardando', 'concluida'];
+        const PRIO_LABEL = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
+        const TIPO_META = {
+            ligacao:  { label: 'Telefone', icon: 'ri-phone-line' },
+            email:    { label: 'E-mail', icon: 'ri-mail-line' },
+            reuniao:  { label: 'Reunião', icon: 'ri-group-line' },
+            visita:   { label: 'Visita', icon: 'ri-map-pin-2-line' },
+            demo:     { label: 'Demo', icon: 'ri-presentation-line' },
+            proposta: { label: 'Proposta', icon: 'ri-file-text-line' },
+            outro:    { label: 'Outro', icon: 'ri-price-tag-3-line' }
+        };
+        const LIMITE_KANBAN = 5;
+        let colExpand = { aberta: false, em_andamento: false, aguardando: false, concluida: false };
+
+        function tarefaInicial(nome) { const n = (nome || '').trim(); return n ? n.charAt(0).toUpperCase() : '?'; }
+        function tarefaResp(r) { return r === 'Joao' ? 'João' : (r || '—'); }
+        function tarefaLocal(t) {
+            const l = t.leads || {};
+            const cidade = (l.cidade || '').trim();
+            const uf = (l.estado || '').trim();
+            if (cidade && uf) return cidade + ' - ' + uf;
+            return cidade || uf || '';
+        }
+        function tarefaEsperaRel(t) {
+            // Usa o timestamp mais recente disponível; cai pro vencimento se não houver.
+            const base = t.updated_at || t.atualizado_em || t.created_at;
+            if (base) {
+                const dias = Math.floor((Date.now() - new Date(base).getTime()) / 86400000);
+                if (dias <= 0) return 'Aguardando desde hoje';
+                return 'Aguardando há ' + dias + ' dia' + (dias > 1 ? 's' : '');
+            }
+            if (t.data_vencimento) {
+                const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+                const d = new Date(t.data_vencimento + 'T12:00:00');
+                const dias = Math.round((d - hoje) / 86400000);
+                if (dias < 0) return 'Atrasada há ' + Math.abs(dias) + ' dia' + (Math.abs(dias) > 1 ? 's' : '');
+                if (dias === 0) return 'Vence hoje';
+                return 'Vence em ' + dias + ' dia' + (dias > 1 ? 's' : '');
+            }
+            return '';
+        }
 
         async function loadTarefas() {
             const [tarefas, todasMsgs] = await Promise.all([
@@ -1572,6 +1793,7 @@
                 search: (get('tarefa-search') || '').toLowerCase().trim(),
                 responsavel: get('tarefa-resp'),
                 prioridade: get('tarefa-prio'),
+                tipo: get('tarefa-tipo'),
                 prazo: get('tarefa-prazo')
             };
         }
@@ -1596,32 +1818,67 @@
             return true;
         }
 
+        function tarefaMatchFiltros(t, f) {
+            if (f.responsavel && t.responsavel !== f.responsavel) return false;
+            if (f.prioridade && t.prioridade !== f.prioridade) return false;
+            if (f.tipo && t.tipo !== f.tipo) return false;
+            if (!matchPrazo(t, f.prazo)) return false;
+            if (f.search) {
+                const l = t.leads || {};
+                const blob = [t.titulo, t.descricao, t.responsavel, l.nome, l.cidade].map(x => x || '').join(' ').toLowerCase();
+                if (!blob.includes(f.search)) return false;
+            }
+            return true;
+        }
+
         function renderTarefas() {
             const f = getTarefaFilters();
-            const filtradas = tarefasCache.filter(t => {
-                if (t.status === 'cancelada') return false;
-                if (f.responsavel && t.responsavel !== f.responsavel) return false;
-                if (f.prioridade && t.prioridade !== f.prioridade) return false;
-                if (!matchPrazo(t, f.prazo)) return false;
-                if (f.search) {
-                    const blob = ((t.titulo || '') + ' ' + (t.descricao || '')).toLowerCase();
-                    if (!blob.includes(f.search)) return false;
-                }
-                return true;
-            });
+            const ativas = tarefasCache.filter(t => t.status !== 'cancelada');
 
-            const renderCard = t => {
+            // Stats são visão geral: contam todas as ativas, independentes dos filtros das colunas.
+            renderTarefaStats(ativas);
+
+            const filtradas = ativas.filter(t => tarefaMatchFiltros(t, f));
+
+            const renderCard = (t, i) => {
                 const overdue = isOverdue(t);
                 const origem = mensagensSociosByTarefa[t.id];
-                const prioPill = t.prioridade ? `<span class="pill ${t.prioridade}">${t.prioridade}</span>` : '';
-                return `<div class="kanban-card ${overdue ? 'overdue' : ''}" onclick="openTarefaDetail('${t.id}')">
-                    <h4>${escapeHTML(t.titulo || '')}</h4>
-                    <div style="margin-bottom:6px">${prioPill}${origem ? '<span class="pill" title="Veio da Caixa de Entrada"><i class="ri-telegram-2-line" style="color:#2aabee"></i> Telegram</span>' : ''}</div>
+                const resp = tarefaResp(t.responsavel);
+                const loc = tarefaLocal(t);
+
+                const prioPill = t.prioridade ? `<span class="pill ${t.prioridade}">${PRIO_LABEL[t.prioridade] || t.prioridade}</span>` : '';
+                let canalPill = '';
+                if (origem) {
+                    canalPill = `<span class="pill pill-canal" title="Veio da Caixa de Entrada"><i class="ri-telegram-2-line" style="color:#2aabee"></i> Telegram</span>`;
+                } else if (t.tipo && TIPO_META[t.tipo]) {
+                    canalPill = `<span class="pill pill-canal"><i class="${TIPO_META[t.tipo].icon}"></i> ${TIPO_META[t.tipo].label}</span>`;
+                }
+
+                // Barra de progresso: só renderiza quando houver dado real (campo opcional 'progresso').
+                let prog = '';
+                if (typeof t.progresso === 'number' && t.status === 'em_andamento') {
+                    const p = Math.max(0, Math.min(100, Math.round(t.progresso)));
+                    prog = `<div class="tk-progress"><div class="tk-progress-track"><div class="tk-progress-fill" style="width:${p}%"></div></div><div class="tk-progress-label">${p}%</div></div>`;
+                }
+
+                let foot = '';
+                if (t.status === 'concluida') {
+                    foot = `<div class="tk-foot done"><i class="ri-check-double-line"></i> Concluída por ${escapeHTML(resp)}</div>`;
+                } else if (t.status === 'aguardando') {
+                    const rel = tarefaEsperaRel(t);
+                    if (rel) foot = `<div class="tk-foot wait"><i class="ri-hourglass-line"></i> ${rel}</div>`;
+                }
+
+                return `<div class="kanban-card ${overdue ? 'overdue' : ''}" style="animation-delay:${(Math.min(i, 8) * 0.03).toFixed(2)}s" onclick="openTarefaDetail('${t.id}')">
+                    <h4>${escapeHTML(t.titulo || '(sem título)')}</h4>
+                    ${(prioPill || canalPill) ? `<div class="pills">${prioPill}${canalPill}</div>` : ''}
                     <div class="meta">
-                        <span>${escapeHTML(t.responsavel || '—')}</span>
-                        <span class="${overdue ? 'overdue-flag' : ''}">📅 ${fmtDate(t.data_vencimento)}${overdue ? ' ⚠️' : ''}</span>
+                        <span class="meta-resp"><span class="av">${escapeHTML(tarefaInicial(resp))}</span><span>${escapeHTML(resp)}</span></span>
+                        <span class="meta-date ${overdue ? 'overdue-flag' : ''}"><i class="ri-calendar-line"></i> ${fmtDate(t.data_vencimento)}</span>
                     </div>
-                    ${t.leads ? '<div class="meta" style="margin-top:4px">🏢 ' + escapeHTML(t.leads.nome) + '</div>' : ''}
+                    ${loc ? `<div class="meta-loc"><i class="ri-map-pin-line"></i> ${escapeHTML(loc)}</div>` : ''}
+                    ${prog}
+                    ${foot}
                 </div>`;
             };
 
@@ -1629,10 +1886,95 @@
                 const lista = filtradas.filter(t => t.status === s);
                 const el = document.getElementById('kanban-' + s);
                 const cnt = document.getElementById('count-' + s);
-                if (el) el.innerHTML = lista.map(renderCard).join('') || '<p style="color:#555;font-size:12px;padding:8px">Nenhuma</p>';
                 if (cnt) cnt.textContent = lista.length;
+                if (!el) return;
+                if (!lista.length) { el.innerHTML = '<div class="kanban-empty">Nenhuma tarefa</div>'; return; }
+                const expandida = colExpand[s];
+                const visiveis = expandida ? lista : lista.slice(0, LIMITE_KANBAN);
+                let html = visiveis.map((t, i) => renderCard(t, i)).join('');
+                if (lista.length > LIMITE_KANBAN) {
+                    const resto = lista.length - LIMITE_KANBAN;
+                    html += expandida
+                        ? `<button class="kanban-more" onclick="event.stopPropagation();toggleCol('${s}')"><i class="ri-arrow-up-s-line"></i> Ver menos</button>`
+                        : `<button class="kanban-more" onclick="event.stopPropagation();toggleCol('${s}')"><i class="ri-add-line"></i> Ver mais ${resto} tarefa${resto > 1 ? 's' : ''}</button>`;
+                }
+                el.innerHTML = html;
             });
+
+            atualizarSinoTarefas();
         }
+
+        function renderTarefaStats(ativas) {
+            const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+            const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+            const concluidasHoje = ativas.filter(t => {
+                if (t.status !== 'concluida') return false;
+                const c = t.concluida_em || t.data_conclusao;
+                if (!c) return false;
+                const d = new Date(c); d.setHours(0, 0, 0, 0);
+                return d.getTime() === hoje.getTime();
+            }).length;
+            set('tk-stat-total', ativas.length);
+            set('tk-stat-atrasadas', ativas.filter(isOverdue).length);
+            set('tk-stat-andamento', ativas.filter(t => t.status === 'em_andamento').length);
+            set('tk-stat-aguardando', ativas.filter(t => t.status === 'aguardando').length);
+            set('tk-stat-hoje', concluidasHoje);
+        }
+
+        function toggleCol(s) { colExpand[s] = !colExpand[s]; renderTarefas(); }
+
+        function clearTarefaFilters() {
+            ['tarefa-search', 'tarefa-resp', 'tarefa-prio', 'tarefa-tipo', 'tarefa-prazo'].forEach(id => {
+                const e = document.getElementById(id); if (e) e.value = '';
+            });
+            colExpand = { aberta: false, em_andamento: false, aguardando: false, concluida: false };
+            renderTarefas();
+        }
+
+        // Espelha a contagem de não triados da Caixa de Entrada no sino da aba.
+        function atualizarSinoTarefas() {
+            const bell = document.getElementById('tk-bell-count');
+            const caixaEl = document.getElementById('nav-caixa-count');
+            if (!bell) return;
+            const n = caixaEl ? parseInt(caixaEl.textContent || '0', 10) : 0;
+            const visivel = caixaEl && caixaEl.style.display !== 'none' && n > 0;
+            if (visivel) { bell.textContent = n; bell.style.display = 'flex'; }
+            else { bell.style.display = 'none'; }
+        }
+
+        // Exporta as tarefas atualmente filtradas em CSV (UTF-8 com BOM p/ Excel PT-BR).
+        function exportTarefas() {
+            const f = getTarefaFilters();
+            const lista = tarefasCache.filter(t => t.status !== 'cancelada').filter(t => tarefaMatchFiltros(t, f));
+            if (!lista.length) { alert('Nenhuma tarefa para exportar com os filtros atuais.'); return; }
+            const esc = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+            const head = ['Título', 'Status', 'Prioridade', 'Tipo', 'Responsável', 'Vencimento', 'Cliente', 'Cidade', 'UF'];
+            const linhas = lista.map(t => {
+                const l = t.leads || {};
+                const tipoLabel = TIPO_META[t.tipo] ? TIPO_META[t.tipo].label : (t.tipo || '');
+                return [t.titulo, STATUS_LABEL[t.status] || t.status, PRIO_LABEL[t.prioridade] || t.prioridade || '', tipoLabel, tarefaResp(t.responsavel), t.data_vencimento || '', l.nome || '', l.cidade || '', l.estado || ''].map(esc).join(',');
+            });
+            const csv = '﻿' + [head.map(esc).join(','), ...linhas].join('\r\n');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'tarefas-' + new Date().toISOString().slice(0, 10) + '.csv';
+            document.body.appendChild(a); a.click(); a.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        // Atalho Ctrl/Cmd+K foca a busca quando a aba Tarefas está ativa.
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+                const view = document.getElementById('view-tarefas');
+                if (view && view.classList.contains('active')) {
+                    e.preventDefault();
+                    const s = document.getElementById('tarefa-search');
+                    if (s) s.focus();
+                }
+            }
+        });
 
         function openTarefaDetail(id) {
             const t = tarefasCache.find(x => x.id === id);
