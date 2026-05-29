@@ -936,6 +936,67 @@
         .ai-confidence-bar { height: 4px; background: var(--surface); border-radius: 2px; overflow: hidden; margin-bottom: 10px }
         .ai-confidence-bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--red), var(--yellow), var(--green)); transition: width .5s }
 
+        /* Banner de alerta da aba Tarefas */
+        #tk-alerta {
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 18px;
+            padding: 12px 16px;
+            border-radius: 12px;
+            background: linear-gradient(90deg, rgba(245, 158, 11, .18), rgba(239, 68, 68, .14));
+            border: 1px solid rgba(245, 158, 11, .45);
+            color: #fde68a;
+            font-size: 13.5px;
+            cursor: pointer;
+            animation: tkAlertaPulse 2.4s ease-in-out infinite
+        }
+
+        #tk-alerta i {
+            font-size: 18px;
+            color: #f59e0b
+        }
+
+        #tk-alerta b {
+            color: #fff
+        }
+
+        #tk-alerta:hover {
+            border-color: rgba(245, 158, 11, .8)
+        }
+
+        @keyframes tkAlertaPulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0) }
+            50% { box-shadow: 0 0 0 4px rgba(245, 158, 11, .12) }
+        }
+
+        /* Destaque de cards novos / iminentes no Kanban */
+        .kanban-card.nova {
+            border-color: rgba(59, 130, 246, .7);
+            box-shadow: 0 0 0 1px rgba(59, 130, 246, .4), 0 0 14px rgba(59, 130, 246, .25)
+        }
+
+        .kanban-card.iminente {
+            border-color: rgba(245, 158, 11, .7);
+            box-shadow: 0 0 0 1px rgba(245, 158, 11, .4), 0 0 14px rgba(245, 158, 11, .25)
+        }
+
+        .pill.nova-pill {
+            background: rgba(59, 130, 246, .22);
+            color: #93c5fd;
+            border: 1px solid rgba(59, 130, 246, .5)
+        }
+
+        .pill.iminente-pill {
+            background: rgba(245, 158, 11, .22);
+            color: #fcd34d;
+            border: 1px solid rgba(245, 158, 11, .5);
+            animation: tkAlertaPulse 2s ease-in-out infinite
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            #tk-alerta, .pill.iminente-pill { animation: none }
+        }
+
         /* Menu mobile — escondidos no desktop */
         #menu-toggle {
             display: none;
@@ -1226,6 +1287,7 @@
                     </div>
                 </div>
             </div>
+            <div id="tk-alerta" onclick="focarUrgentes()" style="display:none"></div>
             <div class="kanban-4">
                 <div class="kanban-col">
                     <div class="kanban-col-header col-aberta">
@@ -1872,6 +1934,39 @@
             return new Date(t.data_vencimento + 'T12:00:00') < hoje;
         }
 
+        // Dias até o vencimento (0 = hoje, 1 = amanhã, negativo = atrasada). null se sem data.
+        function diasAteVenc(t) {
+            if (!t.data_vencimento) return null;
+            const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+            const d = new Date(t.data_vencimento + 'T00:00:00');  // meia-noite local p/ contar dias inteiros
+            return Math.round((d - hoje) / 86400000);
+        }
+        // Tarefa criada há pouco (<36h) e ainda ativa — merece destaque "nova".
+        function tarefaNova(t) {
+            if (t.status === 'concluida' || t.status === 'cancelada') return false;
+            if (!t.created_at) return false;
+            return (Date.now() - new Date(t.created_at).getTime()) < 36 * 3600000;
+        }
+        // Vence hoje ou amanhã e ainda ativa — reunião/compromisso iminente.
+        function tarefaIminente(t) {
+            if (t.status === 'concluida' || t.status === 'cancelada') return false;
+            const d = diasAteVenc(t);
+            return d === 0 || d === 1;
+        }
+        // Chave de ordenação da coluna: novas → iminentes → demais; empate por
+        // vencimento asc (atrasadas sobem) e depois created_at desc (recentes primeiro).
+        function urgenciaRank(t) {
+            const tier = tarefaNova(t) ? 0 : (tarefaIminente(t) ? 1 : 2);
+            const venc = t.data_vencimento ? new Date(t.data_vencimento + 'T12:00:00').getTime() : 8.64e15;
+            const criada = t.created_at ? new Date(t.created_at).getTime() : 0;
+            return [tier, venc, -criada];
+        }
+        function urgenciaSort(a, b) {
+            const ra = urgenciaRank(a), rb = urgenciaRank(b);
+            for (let i = 0; i < ra.length; i++) { if (ra[i] !== rb[i]) return ra[i] - rb[i]; }
+            return 0;
+        }
+
         function matchPrazo(t, prazo) {
             if (!prazo) return true;
             if (!t.data_vencimento) return false;
@@ -1905,6 +2000,7 @@
 
             // Stats são visão geral: contam todas as ativas, independentes dos filtros das colunas.
             renderTarefaStats(ativas);
+            renderTarefaAlerta(ativas);
 
             const filtradas = ativas.filter(t => tarefaMatchFiltros(t, f));
 
@@ -1913,6 +2009,16 @@
                 const origem = mensagensSociosByTarefa[t.id];
                 const resp = tarefaResp(t.responsavel);
                 const loc = tarefaLocal(t);
+
+                const nova = tarefaNova(t);
+                const iminente = tarefaIminente(t);
+                const dvenc = diasAteVenc(t);
+                let alertaPill = '';
+                if (nova) alertaPill += `<span class="pill nova-pill">🆕 Nova</span>`;
+                if (iminente) {
+                    const quando = dvenc === 0 ? '🔴 Hoje' : '🟠 Amanhã';
+                    alertaPill += `<span class="pill iminente-pill">${quando}${t.hora ? ' ' + String(t.hora).slice(0, 5) : ''}</span>`;
+                }
 
                 const prioPill = t.prioridade ? `<span class="pill ${t.prioridade}">${PRIO_LABEL[t.prioridade] || t.prioridade}</span>` : '';
                 let canalPill = '';
@@ -1937,9 +2043,9 @@
                     if (rel) foot = `<div class="tk-foot wait"><i class="ri-hourglass-line"></i> ${rel}</div>`;
                 }
 
-                return `<div class="kanban-card ${overdue ? 'overdue' : ''}" style="animation-delay:${(Math.min(i, 8) * 0.03).toFixed(2)}s" onclick="openTarefaDetail('${t.id}')">
+                return `<div class="kanban-card ${overdue ? 'overdue' : ''} ${nova ? 'nova' : ''} ${iminente ? 'iminente' : ''}" style="animation-delay:${(Math.min(i, 8) * 0.03).toFixed(2)}s" onclick="openTarefaDetail('${t.id}')">
                     <h4>${escapeHTML(t.titulo || '(sem título)')}</h4>
-                    ${(prioPill || canalPill) ? `<div class="pills">${prioPill}${canalPill}</div>` : ''}
+                    ${(alertaPill || prioPill || canalPill) ? `<div class="pills">${alertaPill}${prioPill}${canalPill}</div>` : ''}
                     <div class="meta">
                         <span class="meta-resp"><span class="av">${escapeHTML(tarefaInicial(resp))}</span><span>${escapeHTML(resp)}</span></span>
                         <span class="meta-date ${overdue ? 'overdue-flag' : ''}"><i class="ri-calendar-line"></i> ${fmtDate(t.data_vencimento)}</span>
@@ -1952,6 +2058,8 @@
 
             STATUS_ORDER.forEach(s => {
                 const lista = filtradas.filter(t => t.status === s);
+                // Novas e iminentes sobem ao topo — não somem atrás do "Ver mais".
+                lista.sort(urgenciaSort);
                 const el = document.getElementById('kanban-' + s);
                 const cnt = document.getElementById('count-' + s);
                 if (cnt) cnt.textContent = lista.length;
@@ -1987,6 +2095,34 @@
             set('tk-stat-andamento', ativas.filter(t => t.status === 'em_andamento').length);
             set('tk-stat-aguardando', ativas.filter(t => t.status === 'aguardando').length);
             set('tk-stat-hoje', concluidasHoje);
+        }
+
+        // Banner de alerta no topo da aba: reuniões hoje/amanhã + tarefas novas.
+        function renderTarefaAlerta(ativas) {
+            const el = document.getElementById('tk-alerta');
+            if (!el) return;
+            const reunioes = ativas.filter(t => t.tipo === 'reuniao' && tarefaIminente(t))
+                .sort((a, b) => (diasAteVenc(a) - diasAteVenc(b)));
+            const novas = ativas.filter(tarefaNova);
+            if (!reunioes.length && !novas.length) { el.style.display = 'none'; return; }
+            const partes = reunioes.slice(0, 3).map(t => {
+                const quando = diasAteVenc(t) === 0 ? 'hoje' : 'amanhã';
+                const hora = t.hora ? ' ' + String(t.hora).slice(0, 5) : '';
+                return `<b>${escapeHTML(t.titulo)}</b> (${quando}${hora})`;
+            });
+            if (reunioes.length > 3) partes.push(`+${reunioes.length - 3}`);
+            const blocos = [];
+            if (reunioes.length) blocos.push(`${reunioes.length} reuni${reunioes.length > 1 ? 'ões' : 'ão'} pra hoje/amanhã: ` + partes.join(' · '));
+            if (novas.length) blocos.push(`${novas.length} tarefa${novas.length > 1 ? 's' : ''} nova${novas.length > 1 ? 's' : ''}`);
+            el.innerHTML = `<i class="ri-notification-3-line"></i><span>${blocos.join('  ·  ')}</span>`;
+            el.style.display = 'flex';
+        }
+        // Clicar no banner foca os compromissos próximos (filtro "esta semana").
+        function focarUrgentes() {
+            const prazo = document.getElementById('tarefa-prazo');
+            if (prazo) prazo.value = 'week';
+            renderTarefas();
+            document.querySelector('.kanban-4')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         function toggleCol(s) { colExpand[s] = !colExpand[s]; renderTarefas(); }
