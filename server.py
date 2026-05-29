@@ -7,7 +7,14 @@ import json
 import secrets
 import requests
 import re
+import ssl
 import threading
+import imaplib
+import smtplib
+from email.header import decode_header, make_header
+from email.utils import parseaddr, formataddr, formatdate, make_msgid, parsedate_to_datetime
+from email.message import EmailMessage
+from email import message_from_bytes
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from dotenv import load_dotenv
@@ -1847,6 +1854,22 @@ AI_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "rascunhar_email",
+            "description": "Gera um RASCUNHO de e-mail e manda no Telegram pro socio revisar e enviar pela aba E-mail do CRM. NUNCA envia e-mail de verdade — so escreve o rascunho. Use quando a mensagem pede pra responder/escrever pra um cliente por e-mail ('responde o prefeito por email', 'escreve um email pro contato da X confirmando a demo').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "destinatario": {"type": ["string", "null"], "description": "E-mail ou nome do destinatario, se a mensagem indicar"},
+                    "assunto": {"type": "string", "description": "Assunto sugerido, curto e claro"},
+                    "corpo": {"type": "string", "description": "Corpo do e-mail em PT-BR, tom profissional, pronto pra enviar (sem placeholders tipo [nome])"}
+                },
+                "required": ["assunto", "corpo"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "finalizar",
             "description": "OBRIGATORIA NO FIM. Chame depois de executar todas as outras tools necessarias. Encerra o processamento da mensagem.",
             "parameters": {
@@ -2051,11 +2074,12 @@ TOOLS DE ESCRITA NO TELEGRAM (CRITICAS):
 ═══════════════════════════════════════════════════
 - perguntar_no_telegram(pergunta): use SOMENTE quando faltar info critica e voce nao consegue inferir. Encerra o processamento.
 - responder_no_telegram(resumo): OBRIGATORIA antes de finalizar. Sempre da feedback do que voce fez.
+- rascunhar_email(assunto, corpo, destinatario): quando o socio pede pra responder/escrever pra um cliente por E-MAIL. Voce SO escreve o rascunho (vai pro grupo interno pro socio revisar e enviar pelo CRM). NUNCA envia e-mail sozinho.
 
 REGRAS DE SEGURANCA (NUNCA QUEBRE):
 1. NUNCA marque reuniao sem data E hora claras. Se a mensagem original diz "semana que vem" / "qualquer dia" sem precisao, faca: criar_lead + registrar_acao + perguntar_no_telegram pedindo data+hora. NAO crie tarefa de reuniao ainda. Quando a resposta vier (continuacao de thread), crie a tarefa de reuniao com data/hora exatas.
 2. NUNCA execute acao destrutiva (apagar lead, alterar contrato existente, cancelar tarefa de outro socio).
-3. NUNCA envie mensagem pra cliente externo. So perguntar_no_telegram e responder_no_telegram (que ficam no grupo interno).
+3. NUNCA envie mensagem/e-mail pra cliente externo. So perguntar_no_telegram, responder_no_telegram e rascunhar_email (todas ficam no grupo interno; rascunhar_email APENAS escreve o rascunho, quem envia e o socio).
 4. NUNCA invente lead_id. So use IDs que vieram do buscar_lead ou do retorno de criar_lead.
 5. Datas relativas CLARAS (amanha, sexta, dia 15, em 3 dias) calcule normalmente — NAO pergunte.
 6. Em CONTINUACAO DE THREAD (quando o user_content comecar com "⚠️ ESTA MENSAGEM E CONTINUACAO"), VOCE TEM TODO O CONTEXTO ja resumido. NAO trate como mensagem isolada. NAO pergunte coisa que ja esta listada como "JA executou". Combine a INTENCAO COMPLETA (pedido original + resposta atual) e execute.
@@ -2345,6 +2369,26 @@ def _execute_tool(tool_name, args, msg_row, msg_id, user_label="Agente IA"):
                 register_bot_message_in_db(bot_msg_id, resumo, thread_root)
                 return {"ok": True, "kind": "resumo", "telegram_message_id": bot_msg_id}
             return {"ok": False, "error": "falha ao enviar resumo no Telegram"}
+
+        if tool_name == "rascunhar_email":
+            assunto = (args.get("assunto") or "").strip()
+            corpo = (args.get("corpo") or "").strip()
+            dest = (args.get("destinatario") or "").strip()
+            if not corpo:
+                return {"ok": False, "error": "corpo vazio"}
+            # Escapa partes dinamicas — corpo e texto livre e quebraria o parse_mode HTML do Telegram
+            def _esc(s):
+                return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            head = "✍️ <b>Rascunho de e-mail</b>"
+            if dest:
+                head += f" para <b>{_esc(dest)}</b>"
+            texto = (
+                f"{head}\n<b>Assunto:</b> {_esc(assunto)}\n\n{_esc(corpo)}\n\n"
+                "<i>Revise e envie pela aba E-mail do CRM — eu não envio sozinho.</i>"
+            )
+            reply_to = (msg_row or {}).get("telegram_message_id")
+            send_telegram_message(texto, reply_to_message_id=reply_to)
+            return {"ok": True, "kind": "rascunho_email", "assunto": assunto}
 
         return {"ok": False, "error": f"tool desconhecida: {tool_name}"}
 
@@ -3011,6 +3055,376 @@ def api_reclassificar_ia(msg_id):
         return jsonify({"error": "Agente IA desligado (OPENAI_API_KEY ausente)"}), 503
     threading.Thread(target=classify_message_with_ai, args=(msg_id,), daemon=True).start()
     return jsonify({"ok": True, "msg": "reclassificacao disparada em background"}), 202
+
+
+# ============================================================
+# E-MAIL DA EMPRESA (IMAP/SMTP — caixa contato@nodedata.com.br)
+# ============================================================
+# Stdlib pura (imaplib/smtplib/email). Sem armazenar a caixa em massa: a INBOX
+# e lida AO VIVO via IMAP. So vira registro persistido quando um socio vincula
+# um e-mail a um lead ou envia resposta (grava em historico_acoes). Decisao de
+# minimizacao de dados — a caixa carrega correspondencia de prefeitura (LGPD).
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
+EMAIL_IMAP_HOST = os.getenv("EMAIL_IMAP_HOST", "imap.hostinger.com")
+EMAIL_IMAP_PORT = int(os.getenv("EMAIL_IMAP_PORT", "993"))
+EMAIL_SMTP_HOST = os.getenv("EMAIL_SMTP_HOST", "smtp.hostinger.com")
+EMAIL_SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "465"))
+EMAIL_DISPLAY_NAME = os.getenv("EMAIL_DISPLAY_NAME", "Node Data")
+
+if EMAIL_ADDRESS and EMAIL_PASSWORD:
+    print(f"📧 E-mail configurado ({EMAIL_ADDRESS} via {EMAIL_IMAP_HOST})")
+else:
+    print("⚠️ EMAIL_ADDRESS/EMAIL_PASSWORD ausentes — modulo de e-mail desligado (CRM segue normal)")
+
+# Cache leve da INBOX em memoria — evita rebater IMAP a cada clique. TTL curto.
+_inbox_cache = {"data": None, "ts": None}
+_INBOX_TTL_SECONDS = 60
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _email_enabled():
+    return bool(EMAIL_ADDRESS and EMAIL_PASSWORD)
+
+
+def _valid_email(addr):
+    return bool(addr and _EMAIL_RE.match(addr.strip()))
+
+
+def _mask_email(addr):
+    """Mascara o local-part pra log (LGPD). 'joao@x.com' -> 'j***@x.com'."""
+    addr = (addr or "").strip()
+    if "@" not in addr:
+        return "***"
+    local, _, domain = addr.partition("@")
+    return f"{local[:1]}***@{domain}"
+
+
+def _decode_mime(raw):
+    """Decodifica header MIME (assunto/nome) pra str legivel. Nunca levanta."""
+    if not raw:
+        return ""
+    try:
+        return str(make_header(decode_header(raw)))
+    except Exception:
+        return str(raw)
+
+
+def _imap_login():
+    """Abre conexao IMAP4_SSL logada. Quem chama e responsavel por .logout()."""
+    ctx = ssl.create_default_context()
+    conn = imaplib.IMAP4_SSL(EMAIL_IMAP_HOST, EMAIL_IMAP_PORT, ssl_context=ctx, timeout=20)
+    conn.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+    return conn
+
+
+def _decode_payload(part):
+    """Texto de uma parte MIME, respeitando charset. Nunca levanta."""
+    try:
+        payload = part.get_payload(decode=True)
+        if payload is None:
+            return ""
+        charset = part.get_content_charset() or "utf-8"
+        return payload.decode(charset, "ignore")
+    except Exception:
+        return ""
+
+
+def _extract_bodies(msg):
+    """Extrai (texto_plano, html) de uma mensagem, ignorando anexos."""
+    text, html = "", ""
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.is_multipart():
+                continue
+            disp = str(part.get("Content-Disposition") or "").lower()
+            if "attachment" in disp:
+                continue
+            ctype = part.get_content_type()
+            if ctype == "text/plain" and not text:
+                text = _decode_payload(part)
+            elif ctype == "text/html" and not html:
+                html = _decode_payload(part)
+    else:
+        payload = _decode_payload(msg)
+        if msg.get_content_type() == "text/html":
+            html = payload
+        else:
+            text = payload
+    return text, html
+
+
+def _date_to_iso(raw):
+    try:
+        return parsedate_to_datetime(raw).isoformat()
+    except Exception:
+        return raw or ""
+
+
+def _fetch_inbox(limit=40):
+    """Le os ultimos `limit` e-mails da INBOX ao vivo (so headers — rapido).
+    Retorna lista de dicts, mais recentes primeiro. Levanta em falha de conexao."""
+    conn = _imap_login()
+    try:
+        conn.select("INBOX", readonly=True)
+        typ, data = conn.uid("search", None, "ALL")
+        if typ != "OK" or not data or not data[0]:
+            return []
+        uids = data[0].split()
+        recent = uids[-limit:]
+        if not recent:
+            return []
+        uid_set = b",".join(recent)
+        typ, msg_data = conn.uid(
+            "fetch", uid_set,
+            "(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID)])"
+        )
+        if typ != "OK":
+            return []
+        items = []
+        for part in msg_data:
+            if not isinstance(part, tuple) or len(part) < 2:
+                continue
+            envelope = part[0]
+            env_str = envelope.decode("utf-8", "ignore") if isinstance(envelope, bytes) else str(envelope)
+            uid_m = re.search(r"UID (\d+)", env_str)
+            if not uid_m:
+                continue
+            uid = int(uid_m.group(1))
+            try:
+                flags = imaplib.ParseFlags(envelope)
+            except Exception:
+                flags = ()
+            flags_norm = [f.decode() if isinstance(f, bytes) else f for f in flags]
+            seen = "\\Seen" in flags_norm
+            hdr = message_from_bytes(part[1])
+            from_name, from_addr = parseaddr(_decode_mime(hdr.get("From", "")))
+            items.append({
+                "uid": uid,
+                "from_name": from_name or from_addr,
+                "from_addr": (from_addr or "").lower(),
+                "subject": _decode_mime(hdr.get("Subject", "")) or "(sem assunto)",
+                "date": _date_to_iso(hdr.get("Date", "")),
+                "message_id": (hdr.get("Message-ID") or "").strip(),
+                "seen": seen,
+            })
+        items.sort(key=lambda x: x["uid"], reverse=True)
+        return items
+    finally:
+        try:
+            conn.logout()
+        except Exception:
+            pass
+
+
+def _fetch_message(uid, mark_seen=True):
+    """Corpo completo de uma mensagem por UID. Marca como lida por padrao."""
+    conn = _imap_login()
+    try:
+        conn.select("INBOX")
+        typ, msg_data = conn.uid("fetch", str(uid).encode(), "(BODY.PEEK[])")
+        if typ != "OK" or not msg_data or not isinstance(msg_data[0], tuple):
+            return None
+        msg = message_from_bytes(msg_data[0][1])
+        from_name, from_addr = parseaddr(_decode_mime(msg.get("From", "")))
+        text, html = _extract_bodies(msg)
+        if mark_seen:
+            try:
+                conn.uid("store", str(uid).encode(), "+FLAGS", "\\Seen")
+            except Exception:
+                pass
+        return {
+            "uid": int(uid),
+            "from_name": from_name or from_addr,
+            "from_addr": (from_addr or "").lower(),
+            "to": _decode_mime(msg.get("To", "")),
+            "subject": _decode_mime(msg.get("Subject", "")) or "(sem assunto)",
+            "date": _date_to_iso(msg.get("Date", "")),
+            "message_id": (msg.get("Message-ID") or "").strip(),
+            "references": (msg.get("References") or "").strip(),
+            "body_text": text,
+            "body_html": html,
+        }
+    finally:
+        try:
+            conn.logout()
+        except Exception:
+            pass
+
+
+def _send_email(to_addr, subject, body_text, in_reply_to=None, references=None):
+    """Envia e-mail via SMTP_SSL. Retorna o Message-ID. Levanta em falha."""
+    msg = EmailMessage()
+    msg["From"] = formataddr((EMAIL_DISPLAY_NAME, EMAIL_ADDRESS))
+    msg["To"] = to_addr
+    msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=True)
+    mid = make_msgid()
+    msg["Message-ID"] = mid
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+        msg["References"] = references or in_reply_to
+    msg.set_content(body_text)
+    ctx = ssl.create_default_context()
+    with smtplib.SMTP_SSL(EMAIL_SMTP_HOST, EMAIL_SMTP_PORT, timeout=20, context=ctx) as smtp:
+        smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+        smtp.send_message(msg)
+    return mid
+
+
+def _inbox_cached(force=False):
+    now = datetime.now()
+    cache = _inbox_cache
+    if not force and cache["data"] is not None and cache["ts"]:
+        if (now - cache["ts"]).total_seconds() < _INBOX_TTL_SECONDS:
+            return cache["data"]
+    data = _fetch_inbox()
+    cache["data"] = data
+    cache["ts"] = now
+    return data
+
+
+def _leads_by_email():
+    """Mapa {email_lower: {id, nome}} dos leads — pra casar remetente <-> lead."""
+    out = {}
+    if not supabase:
+        return out
+    try:
+        r = supabase.table("leads").select("id, nome, email").limit(1000).execute()
+        for l in (r.data or []):
+            em = (l.get("email") or "").strip().lower()
+            if em:
+                out[em] = {"id": l["id"], "nome": l.get("nome")}
+    except Exception:
+        pass
+    return out
+
+
+@app.route("/api/emails")
+@login_required
+def api_emails():
+    """Lista a INBOX ao vivo. ?lead_id=<id> filtra pelo endereco do lead.
+    ?refresh=1 ignora o cache de 60s."""
+    if not _email_enabled():
+        return jsonify({"error": "E-mail não configurado", "disabled": True}), 503
+    try:
+        items = _inbox_cached(force=request.args.get("refresh") == "1")
+    except Exception as e:
+        print(f"⚠️ api_emails erro IMAP: {e}")
+        return jsonify({"error": "Não foi possível conectar à caixa de e-mail"}), 502
+
+    leads_map = _leads_by_email()
+    for it in items:
+        match = leads_map.get(it.get("from_addr") or "")
+        it["lead_id"] = match["id"] if match else None
+        it["lead_nome"] = match["nome"] if match else None
+
+    lead_id = request.args.get("lead_id")
+    if lead_id:
+        lead_email = ""
+        if supabase:
+            try:
+                r = supabase.table("leads").select("email").eq("id", lead_id).limit(1).execute()
+                lead_email = ((r.data[0].get("email") if r.data else "") or "").strip().lower()
+            except Exception:
+                pass
+        if not lead_email:
+            return jsonify([])
+        items = [it for it in items if it.get("from_addr") == lead_email]
+
+    return jsonify(items)
+
+
+@app.route("/api/emails/<uid>")
+@login_required
+def api_email_detail(uid):
+    if not _email_enabled():
+        return jsonify({"error": "E-mail não configurado"}), 503
+    if not uid.isdigit():
+        return jsonify({"error": "UID inválido"}), 400
+    try:
+        msg = _fetch_message(uid)
+    except Exception as e:
+        print(f"⚠️ api_email_detail erro: {e}")
+        return jsonify({"error": "Falha ao abrir e-mail"}), 502
+    if not msg:
+        return jsonify({"error": "E-mail não encontrado"}), 404
+    _inbox_cache["ts"] = None  # marcou como lido — invalida cache da lista
+    return jsonify(msg)
+
+
+@app.route("/api/emails/enviar", methods=["POST"])
+@login_required
+@role_can_write
+def api_email_enviar():
+    if not _email_enabled():
+        return jsonify({"error": "E-mail não configurado"}), 503
+    data = request.json or {}
+    to_addr = (data.get("to") or "").strip()
+    subject = (data.get("subject") or "").strip()
+    body = (data.get("body") or "").strip()
+    if not _valid_email(to_addr):
+        return jsonify({"error": "Destinatário inválido"}), 400
+    if not subject:
+        return jsonify({"error": "Assunto vazio"}), 400
+    if not body:
+        return jsonify({"error": "Corpo vazio"}), 400
+    try:
+        mid = _send_email(
+            to_addr, subject, body,
+            in_reply_to=(data.get("in_reply_to") or "").strip() or None,
+            references=(data.get("references") or "").strip() or None,
+        )
+    except Exception as e:
+        print(f"⚠️ envio SMTP falhou para {_mask_email(to_addr)}: {e}")
+        return jsonify({"error": "Falha ao enviar e-mail"}), 502
+
+    # Persiste no historico do lead so quando o envio esta vinculado a um lead
+    lead_id = data.get("lead_id")
+    if lead_id and supabase:
+        try:
+            supabase.table("historico_acoes").insert({
+                "lead_id": lead_id,
+                "tipo": "email_enviado",
+                "descricao": f"E-mail enviado: {subject}"[:300],
+                "resultado": body[:500],
+                "responsavel": session.get("display_name", ""),
+            }).execute()
+        except Exception as e:
+            print(f"⚠️ historico email_enviado: {e}")
+
+    audit("create", "emails", lead_id, f"E-mail enviado p/ {_mask_email(to_addr)}: {subject[:60]}")
+    _inbox_cache["ts"] = None
+    return jsonify({"ok": True, "message_id": mid})
+
+
+@app.route("/api/emails/vincular", methods=["POST"])
+@login_required
+@role_can_write
+def api_email_vincular():
+    """Vincula um e-mail RECEBIDO a um lead, gravando em historico_acoes."""
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    data = request.json or {}
+    lead_id = data.get("lead_id")
+    if not lead_id:
+        return jsonify({"error": "lead_id obrigatório"}), 400
+    subject = (data.get("subject") or "(sem assunto)").strip()
+    from_addr = (data.get("from_addr") or "").strip()
+    snippet = (data.get("snippet") or "")[:500]
+    try:
+        supabase.table("historico_acoes").insert({
+            "lead_id": lead_id,
+            "tipo": "email_recebido",
+            "descricao": f"E-mail recebido de {from_addr}: {subject}"[:300],
+            "resultado": snippet,
+            "responsavel": session.get("display_name", ""),
+        }).execute()
+        audit("create", "historico_acoes", lead_id, f"E-mail vinculado: {subject[:60]}")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ============================================================

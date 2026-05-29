@@ -1093,6 +1093,7 @@
             <div class="nav-item" data-view="doc-empresa"><i class="ri-building-2-line"></i>Docs Empresa</div>
             <div class="nav-section">Operacional</div>
             <div class="nav-item" data-view="caixa"><i class="ri-inbox-2-line"></i>Caixa de Entrada<span class="badge-count" id="nav-caixa-count" style="display:none"></span></div>
+            <div class="nav-item" data-view="email"><i class="ri-mail-line"></i>E-mail<span class="badge-count" id="nav-email-count" style="display:none"></span></div>
             <div class="nav-item" data-view="health"><i class="ri-pulse-line"></i>Health Monitor</div>
             {% if role == 'admin' %}
             <div class="nav-section">Admin</div>
@@ -1661,6 +1662,23 @@
             <div id="caixa-list"></div>
         </div>
 
+        <div class="view" id="view-email">
+            <div class="page-header">
+                <div>
+                    <h1>E-mail</h1>
+                    <p>Caixa <strong>contato@nodedata.com.br</strong> — leitura ao vivo. Responda e vincule e-mails a um lead.</p>
+                </div>
+                <div style="display:flex;gap:8px">
+                    <button class="btn btn-ghost btn-sm" onclick="loadEmail(true)"><i class="ri-refresh-line"></i> Atualizar</button>
+                    <button class="btn btn-primary btn-sm" onclick="openEmailComposer()"><i class="ri-quill-pen-line"></i> Novo e-mail</button>
+                </div>
+            </div>
+            <div class="task-filters" style="margin-bottom:14px">
+                <input type="text" id="email-search" placeholder="🔍 Buscar por remetente ou assunto" oninput="renderEmailList()">
+            </div>
+            <div id="email-list"></div>
+        </div>
+
     </div><!-- /main -->
 
     <!-- MODAL -->
@@ -1761,6 +1779,7 @@
             else if (v === 'categorias') await loadCategorias();
             else if (v === 'health') await loadHealth();
             else if (v === 'caixa') await loadCaixaEntrada();
+            else if (v === 'email') await loadEmail();
             else if (v === 'users') await loadUsers();
             else if (v === 'audit') await loadAudit();
         }
@@ -3904,6 +3923,200 @@
         // === LEAD DETAIL 360 ===
         let leadDetailCurrent = null;
 
+        // ===================== E-MAIL =====================
+        let emailsCache = [];
+
+        function updateEmailNavBadge() {
+            const naoLidos = emailsCache.filter(e => !e.seen).length;
+            const badge = document.getElementById('nav-email-count');
+            if (!badge) return;
+            if (naoLidos > 0) { badge.textContent = naoLidos; badge.style.display = ''; }
+            else { badge.style.display = 'none'; }
+        }
+
+        async function loadEmail(force) {
+            const box = document.getElementById('email-list');
+            box.innerHTML = '<div class="tab-empty"><i class="ri-loader-4-line"></i> Carregando caixa…</div>';
+            // Garante leads em cache pra poder vincular e-mails depois
+            if (!Array.isArray(leadsCache) || !leadsCache.length) {
+                try { const ls = await api('/api/leads'); if (Array.isArray(ls)) leadsCache = ls; } catch (e) { }
+            }
+            const r = await api('/api/emails' + (force ? '?refresh=1' : ''));
+            if (r && r.disabled) {
+                box.innerHTML = '<div class="tab-empty">📭 Módulo de e-mail ainda não configurado no servidor (faltam as variáveis EMAIL_* no Coolify).</div>';
+                return;
+            }
+            if (r && r.error) {
+                box.innerHTML = `<div class="tab-empty" style="color:var(--red)">⚠️ ${escapeHTML(r.error)}</div>`;
+                return;
+            }
+            emailsCache = Array.isArray(r) ? r : [];
+            updateEmailNavBadge();
+            renderEmailList();
+        }
+
+        function renderEmailList() {
+            const box = document.getElementById('email-list');
+            const q = (document.getElementById('email-search')?.value || '').toLowerCase().trim();
+            let list = emailsCache;
+            if (q) list = list.filter(e =>
+                (e.from_name || '').toLowerCase().includes(q) ||
+                (e.from_addr || '').toLowerCase().includes(q) ||
+                (e.subject || '').toLowerCase().includes(q));
+            if (!list.length) { box.innerHTML = '<div class="tab-empty">Nenhum e-mail.</div>'; return; }
+            box.innerHTML = list.map(e => `
+                <div class="ld-card" style="${e.seen ? '' : 'border-left:3px solid var(--primary)'}" onclick="openEmailRead(${e.uid})">
+                    <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
+                        <div style="min-width:0">
+                            <div class="ld-card-title" style="${e.seen ? 'font-weight:500' : 'font-weight:700'}">
+                                ${e.seen ? '' : '🔵 '}${escapeHTML(e.from_name || e.from_addr || '—')}
+                                ${e.lead_id ? `<span class="badge-mini" title="Lead: ${escapeHTML(e.lead_nome || '')}">🔗 ${escapeHTML(e.lead_nome || 'lead')}</span>` : ''}
+                            </div>
+                            <div class="ld-card-meta"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;max-width:100%">${escapeHTML(e.subject || '(sem assunto)')}</span></div>
+                        </div>
+                        <div class="ld-card-meta" style="white-space:nowrap;flex-shrink:0">${fmtDateTime(e.date)}</div>
+                    </div>
+                </div>`).join('');
+        }
+
+        async function openEmailRead(uid) {
+            const el = document.getElementById('modal-content');
+            el.classList.add('wide');
+            el.innerHTML = '<div class="tab-empty"><i class="ri-loader-4-line"></i> Abrindo e-mail…</div>';
+            document.getElementById('modal-overlay').classList.add('active');
+            const m = await api('/api/emails/' + uid);
+            if (!m || m.error) { el.innerHTML = `<div class="tab-empty" style="color:var(--red)">⚠️ ${escapeHTML((m && m.error) || 'Falha ao abrir')}</div>`; return; }
+            // Atualiza estado de lido no cache + badge
+            const cached = emailsCache.find(e => e.uid === m.uid); if (cached) cached.seen = true;
+            updateEmailNavBadge();
+            const match = (leadsCache || []).find(l => (l.email || '').toLowerCase() === (m.from_addr || ''));
+            el.innerHTML = `<div style="position:relative">
+                <div class="ld-actions">
+                    <button class="btn btn-sm btn-primary" onclick="openEmailComposer({reply:${m.uid}})"><i class="ri-reply-line"></i> Responder</button>
+                    <button class="btn btn-sm btn-ghost" onclick="openVincularEmail(${m.uid})"><i class="ri-link"></i> Vincular a lead</button>
+                    <button class="btn btn-sm btn-ghost" onclick="closeModal()"><i class="ri-close-line"></i></button>
+                </div>
+                <div class="ld-header">
+                    <h2 style="font-size:18px">${escapeHTML(m.subject || '(sem assunto)')}</h2>
+                    <div class="sub">De: <strong>${escapeHTML(m.from_name || '')}</strong> &lt;${escapeHTML(m.from_addr || '')}&gt;${match ? ` · 🔗 ${escapeHTML(match.nome)}` : ''}</div>
+                    <div class="sub">${fmtDateTime(m.date)}</div>
+                </div>
+                <div id="email-body-wrap" style="margin-top:14px;border:1px solid var(--border);border-radius:8px;overflow:hidden"></div>
+            </div>`;
+            const wrap = document.getElementById('email-body-wrap');
+            if (m.body_html) {
+                // iframe sandbox SEM allow-scripts: HTML de terceiros não executa JS (anti-XSS)
+                const frame = document.createElement('iframe');
+                frame.setAttribute('sandbox', '');
+                frame.style.cssText = 'width:100%;height:55vh;border:0;background:#fff';
+                wrap.appendChild(frame);
+                frame.srcdoc = m.body_html;
+            } else {
+                wrap.innerHTML = `<pre style="white-space:pre-wrap;word-wrap:break-word;padding:16px;margin:0;font-family:inherit;font-size:14px;max-height:55vh;overflow:auto">${escapeHTML(m.body_text || '(sem conteúdo)')}</pre>`;
+            }
+        }
+
+        function emailLeadOptions(selected) {
+            const opts = (leadsCache || []).map(l => `<option value="${l.id}" ${l.id === selected ? 'selected' : ''}>${escapeHTML(l.nome || '—')}</option>`).join('');
+            return '<option value="">— não vincular —</option>' + opts;
+        }
+
+        // ctx: {reply:<uid>} pra responder, ou vazio pra novo e-mail
+        async function openEmailComposer(ctx) {
+            ctx = ctx || {};
+            let to = '', subject = '', inReplyTo = '', references = '', leadId = '', quote = '';
+            if (ctx.to) to = ctx.to;
+            if (ctx.subject) subject = ctx.subject;
+            if (ctx.leadId) leadId = ctx.leadId;
+            if (ctx.reply) {
+                const m = await api('/api/emails/' + ctx.reply);
+                if (m && !m.error) {
+                    to = m.from_addr || '';
+                    subject = (m.subject || '').match(/^re:/i) ? m.subject : 'Re: ' + (m.subject || '');
+                    inReplyTo = m.message_id || '';
+                    references = (m.references ? m.references + ' ' : '') + (m.message_id || '');
+                    const match = (leadsCache || []).find(l => (l.email || '').toLowerCase() === (m.from_addr || ''));
+                    if (match) leadId = match.id;
+                    const original = (m.body_text || '').split('\n').map(l => '> ' + l).join('\n');
+                    quote = `\n\n\nEm ${fmtDateTime(m.date)}, ${m.from_name || m.from_addr} escreveu:\n${original}`;
+                }
+            }
+            const el = document.getElementById('modal-content');
+            el.classList.add('wide');
+            el.innerHTML = `<div>
+                <div class="ld-actions"><button class="btn btn-sm btn-ghost" onclick="closeModal()"><i class="ri-close-line"></i></button></div>
+                <h2 style="margin-bottom:14px"><i class="ri-quill-pen-line"></i> ${ctx.reply ? 'Responder e-mail' : 'Novo e-mail'}</h2>
+                <input type="hidden" id="ec-inreplyto" value="${escapeHTML(inReplyTo)}">
+                <input type="hidden" id="ec-references" value="${escapeHTML(references)}">
+                <div class="form-group"><label>Para</label><input type="email" id="ec-to" value="${escapeHTML(to)}" placeholder="destinatario@exemplo.com"></div>
+                <div class="form-group"><label>Assunto</label><input type="text" id="ec-subject" value="${escapeHTML(subject)}"></div>
+                <div class="form-group"><label>Mensagem</label><textarea id="ec-body" rows="12" style="width:100%">${escapeHTML(quote)}</textarea></div>
+                <div class="form-group"><label>Vincular ao lead (registra no histórico)</label><select id="ec-lead">${emailLeadOptions(leadId)}</select></div>
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+                    <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+                    <button class="btn btn-primary" id="ec-send" onclick="sendEmailFromComposer()"><i class="ri-send-plane-line"></i> Enviar</button>
+                </div>
+            </div>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        async function sendEmailFromComposer() {
+            const to = document.getElementById('ec-to').value.trim();
+            const subject = document.getElementById('ec-subject').value.trim();
+            const body = document.getElementById('ec-body').value.trim();
+            if (!to || !subject || !body) { alert('Preencha destinatário, assunto e mensagem.'); return; }
+            const btn = document.getElementById('ec-send');
+            btn.disabled = true; btn.innerHTML = '<i class="ri-loader-4-line"></i> Enviando…';
+            const r = await api('/api/emails/enviar', {
+                method: 'POST', body: {
+                    to, subject, body,
+                    in_reply_to: document.getElementById('ec-inreplyto').value,
+                    references: document.getElementById('ec-references').value,
+                    lead_id: document.getElementById('ec-lead').value || null
+                }
+            });
+            if (!r || r.error) { alert('Erro ao enviar: ' + ((r && r.error) || 'desconhecido')); btn.disabled = false; btn.innerHTML = '<i class="ri-send-plane-line"></i> Enviar'; return; }
+            closeModal();
+            alert('✅ E-mail enviado.');
+            if (document.getElementById('view-email').classList.contains('active')) loadEmail(true);
+        }
+
+        async function openVincularEmail(uid) {
+            const m = emailsCache.find(e => e.uid === uid) || await api('/api/emails/' + uid);
+            if (!m || m.error) { alert('Falha ao carregar e-mail.'); return; }
+            const el = document.getElementById('modal-content');
+            el.innerHTML = `<div>
+                <div class="ld-actions"><button class="btn btn-sm btn-ghost" onclick="closeModal()"><i class="ri-close-line"></i></button></div>
+                <h2 style="margin-bottom:14px"><i class="ri-link"></i> Vincular e-mail a um lead</h2>
+                <p style="color:var(--text2);font-size:13px;margin-bottom:12px">Registra este e-mail recebido no histórico do lead (tipo <em>email_recebido</em>).</p>
+                <div class="form-group"><label>De</label><input type="text" value="${escapeHTML((m.from_name || '') + ' <' + (m.from_addr || '') + '>')}" disabled></div>
+                <div class="form-group"><label>Assunto</label><input type="text" value="${escapeHTML(m.subject || '')}" disabled></div>
+                <div class="form-group"><label>Lead</label><select id="ev-lead">${emailLeadOptions((leadsCache || []).find(l => (l.email || '').toLowerCase() === (m.from_addr || ''))?.id || '')}</select></div>
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+                    <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+                    <button class="btn btn-primary" onclick="confirmVincularEmail(${uid})">Vincular</button>
+                </div>
+            </div>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        async function confirmVincularEmail(uid) {
+            const leadId = document.getElementById('ev-lead').value;
+            if (!leadId) { alert('Escolha um lead.'); return; }
+            const m = emailsCache.find(e => e.uid === uid) || {};
+            const r = await api('/api/emails/vincular', {
+                method: 'POST', body: {
+                    lead_id: leadId,
+                    subject: m.subject || '',
+                    from_addr: m.from_addr || '',
+                    snippet: m.subject || ''
+                }
+            });
+            if (!r || r.error) { alert('Erro: ' + ((r && r.error) || 'desconhecido')); return; }
+            closeModal();
+            alert('✅ E-mail vinculado ao lead.');
+        }
+
         async function openLeadDetail(id) {
             const l = leadsCache.find(x => x.id === id);
             if (!l) return;
@@ -3938,6 +4151,7 @@
                     <button class="lead-tab" data-tab="contratos" onclick="switchLeadTab('contratos')"><i class="ri-file-shield-2-line"></i> Contratos <span class="badge-mini" id="ld-cnt-contratos">—</span></button>
                     <button class="lead-tab" data-tab="documentos" onclick="switchLeadTab('documentos')"><i class="ri-folder-2-line"></i> Documentos <span class="badge-mini" id="ld-cnt-documentos">—</span></button>
                     <button class="lead-tab" data-tab="mensagens" onclick="switchLeadTab('mensagens')"><i class="ri-message-3-line"></i> Mensagens <span class="badge-mini" id="ld-cnt-mensagens">—</span></button>
+                    <button class="lead-tab" data-tab="emails" onclick="switchLeadTab('emails')"><i class="ri-mail-line"></i> E-mails <span class="badge-mini" id="ld-cnt-emails">—</span></button>
                 </div>
                 <div class="lead-tab-content" id="ld-content"></div>
             </div>`;
@@ -3980,6 +4194,31 @@
             if (tab === 'contratos') return loadLeadTabContratos(leadId);
             if (tab === 'documentos') return loadLeadTabDocumentos(leadId);
             if (tab === 'mensagens') return loadLeadTabMensagens(leadId);
+            if (tab === 'emails') return loadLeadTabEmails(leadId);
+        }
+
+        async function loadLeadTabEmails(leadId) {
+            const lead = (leadsCache || []).find(l => l.id === leadId) || leadDetailCurrent || {};
+            const content = document.getElementById('ld-content');
+            const cntEl = document.getElementById('ld-cnt-emails');
+            if (!lead.email) {
+                if (cntEl) cntEl.textContent = '0';
+                content.innerHTML = '<div class="tab-empty">Este lead não tem e-mail cadastrado. Adicione um e-mail no lead para ver a troca de mensagens aqui.</div>';
+                return;
+            }
+            const r = await api('/api/emails?lead_id=' + encodeURIComponent(leadId));
+            if (r && r.disabled) { content.innerHTML = '<div class="tab-empty">📭 Módulo de e-mail não configurado no servidor.</div>'; return; }
+            if (r && r.error) { content.innerHTML = `<div class="tab-empty" style="color:var(--red)">⚠️ ${escapeHTML(r.error)}</div>`; return; }
+            const list = Array.isArray(r) ? r : [];
+            if (cntEl) cntEl.textContent = list.length;
+            const cards = list.map(e => `
+                <div class="ld-card" onclick="openEmailRead(${e.uid})">
+                    <div class="ld-card-title">${escapeHTML(e.subject || '(sem assunto)')}</div>
+                    <div class="ld-card-meta"><span>${escapeHTML(e.from_name || e.from_addr)}</span><span>${fmtDateTime(e.date)}</span></div>
+                </div>`).join('') || `<div class="tab-empty">Nenhum e-mail recebido de ${escapeHTML(lead.email)} ainda.</div>`;
+            content.innerHTML = `<div class="lead-tab-toolbar">
+                <button class="btn btn-primary btn-sm" onclick="openEmailComposer({to:'${escapeHTML(lead.email)}',leadId:'${leadId}'})"><i class="ri-quill-pen-line"></i> Escrever e-mail</button>
+            </div>${cards}`;
         }
 
         function renderLeadOverview(l) {
