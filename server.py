@@ -1288,6 +1288,21 @@ def api_users():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/equipe")
+@login_required
+def api_equipe():
+    """Nomes da equipe ativa (display_name) — usado p/ popular dropdowns de responsável.
+    Acessível a qualquer logado (nomes de exibição não são dado sensível)."""
+    if not supabase:
+        return jsonify([])
+    try:
+        r = supabase.table("crm_users").select("display_name").eq("active", True).execute()
+        nomes = sorted({u.get("display_name") for u in (r.data or []) if u.get("display_name")})
+        return jsonify(nomes)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/users", methods=["POST"])
 @login_required
 @admin_required
@@ -1694,6 +1709,27 @@ AI_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "atualizar_lead",
+            "description": "Atualiza campos de um lead que JA EXISTE (encontrado via buscar_lead). Use quando a mensagem traz info nova de cadastro de um cliente conhecido: telefone novo, email, mudanca de status, cidade, ou proximo passo. NUNCA use pra criar — so pra editar existente. Envie SO os campos que mudaram.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string", "description": "UUID do lead existente (do buscar_lead). NUNCA invente."},
+                    "telefone": {"type": ["string", "null"], "description": "So digitos. Ex: 44991548588"},
+                    "email": {"type": ["string", "null"]},
+                    "status": {"type": ["string", "null"], "enum": ["Novo", "Em Prospecção", "Qualificado", "Em Negociação", "Proposta", "Fechado", "Perdido", "Pausado", None]},
+                    "cidade": {"type": ["string", "null"]},
+                    "estado": {"type": ["string", "null"], "description": "Sigla UF"},
+                    "proximo_passo": {"type": ["string", "null"], "description": "Proximo passo combinado com o cliente"},
+                    "notas": {"type": ["string", "null"], "description": "Observacao a ACRESCENTAR (sera concatenada, nao sobrescreve as notas atuais)"}
+                },
+                "required": ["lead_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "criar_contato",
             "description": "Cria uma pessoa (contato) dentro de um lead. Use quando a mensagem menciona uma pessoa especifica com nome (e geralmente telefone ou email).",
             "parameters": {
@@ -1721,7 +1757,7 @@ AI_TOOLS = [
                 "properties": {
                     "titulo": {"type": "string", "description": "Titulo curto e claro. Ex: 'Ligar para Carlos sobre CPSI'. NUNCA copie a mensagem inteira."},
                     "descricao": {"type": ["string", "null"], "description": "Contexto util da mensagem original"},
-                    "responsavel": {"type": "string", "enum": ["Joao", "Guilherme", "Marcos"]},
+                    "responsavel": {"type": "string", "description": "Nome de alguem da EQUIPE listada no system prompt. Default = quem mandou a mensagem."},
                     "data_vencimento": {"type": "string", "description": "Data ISO YYYY-MM-DD. Calcule de DATA DE HOJE pra termos relativos (amanha, sexta, semana que vem)."},
                     "prioridade": {"type": "string", "enum": ["alta", "media", "baixa"]},
                     "tipo": {"type": "string", "enum": ["ligacao", "email", "reuniao", "visita", "demo", "proposta", "outro"]},
@@ -1839,6 +1875,46 @@ def send_telegram_message(text, reply_to_message_id=None):
     return None
 
 
+def transcrever_audio_telegram(file_id):
+    """Baixa um áudio/voz do Telegram pelo file_id e transcreve via Whisper (OpenAI).
+    Retorna o texto transcrito ou None se falhar (CRM segue funcionando sem áudio)."""
+    if not (TELEGRAM_BOT_TOKEN and openai_client and file_id):
+        return None
+    try:
+        # 1) Descobre o caminho do arquivo no servidor do Telegram
+        get_file = requests.get(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile",
+            params={"file_id": file_id}, timeout=15
+        )
+        if get_file.status_code != 200 or not get_file.json().get("ok"):
+            print(f"⚠️ getFile falhou: status={get_file.status_code}")
+            return None
+        file_path = get_file.json()["result"].get("file_path")
+        if not file_path:
+            return None
+        # 2) Baixa os bytes do áudio
+        audio_resp = requests.get(
+            f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}",
+            timeout=20
+        )
+        if audio_resp.status_code != 200:
+            print(f"⚠️ download de áudio falhou: status={audio_resp.status_code}")
+            return None
+        # 3) Transcreve com Whisper (nome de arquivo preserva a extensão p/ o decoder)
+        nome = file_path.split("/")[-1] or "audio.ogg"
+        transcript = openai_client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(nome, audio_resp.content),
+            language="pt"
+        )
+        texto = (getattr(transcript, "text", "") or "").strip()
+        print(f"🎤 áudio transcrito ({len(texto)} chars)")
+        return texto or None
+    except Exception as e:
+        print(f"⚠️ transcrever_audio_telegram erro: {e}")
+        return None
+
+
 def register_bot_message_in_db(bot_message_id, text, thread_root_telegram_msg_id):
     """Grava mensagem enviada pelo bot na tabela mensagens_socios pra rastrear threads.
     thread_root_telegram_msg_id = telegram_message_id da mensagem ORIGINAL do socio
@@ -1900,7 +1976,7 @@ def _build_agent_system_prompt():
     e workflow esperado. Como muda pouco entre chamadas, OpenAI usa prompt caching
     automatico (50% off no input cacheado quando >1024 tokens).
     """
-    leads_data, verticais_data = [], []
+    leads_data, verticais_data, equipe_data = [], [], []
     if supabase:
         try:
             r = supabase.table("leads").select("id, nome, status, cidade, estado, verticais(nome)").limit(500).execute()
@@ -1912,6 +1988,12 @@ def _build_agent_system_prompt():
             verticais_data = r.data or []
         except Exception:
             pass
+        try:
+            r = supabase.table("crm_users").select("display_name").eq("active", True).execute()
+            equipe_data = [u.get("display_name") for u in (r.data or []) if u.get("display_name")]
+        except Exception:
+            pass
+    equipe_str = ", ".join(equipe_data) if equipe_data else "Joao, Guilherme, Marcos"
 
     leads_str = "\n".join(
         f"- {l.get('nome', '?')} (id: {l['id']}, status: {l.get('status', '—')}, cidade: {l.get('cidade', '—')}/{l.get('estado', '—')}, vertical: {(l.get('verticais') or {}).get('nome', '—')})"
@@ -1926,12 +2008,11 @@ def _build_agent_system_prompt():
     hoje = datetime.now().strftime("%Y-%m-%d")
     return f"""Voce e o AGENTE OPERACIONAL da Node Data — empresa que vende software de inteligencia (analise de sentimento de cidadaos via WhatsApp) para PREFEITURAS e CAMPANHAS POLITICAS.
 
-Os 3 socios sao:
-- Joao (dono, comercial e tecnico)
-- Guilherme (socio)
-- Marcos (socio)
+EQUIPE / RESPONSAVEIS VALIDOS (use exatamente estes nomes ao atribuir tarefas):
+{equipe_str}
+(Joao e o dono. A equipe inclui socios e vendedoras comissionadas que viajam apresentando o produto.)
 
-Voce e o CEREBRO operacional dos 3 socios. Quando uma mensagem chega no grupo Telegram interno, voce LE, EXECUTA o que e seguro, e PERGUNTA quando falta info critica. SEMPRE da feedback final no Telegram resumindo o que fez.
+Voce e o CEREBRO operacional da equipe. Quando uma mensagem chega no grupo Telegram interno, voce LE, EXECUTA o que e seguro, e PERGUNTA quando falta info critica. SEMPRE da feedback final no Telegram resumindo o que fez.
 
 DATA DE HOJE: {hoje}
 
@@ -1983,6 +2064,8 @@ A) Mensagem menciona NOVO cliente:
   8. finalizar
 
 B) Mensagem menciona cliente EXISTENTE: igual A mas pula passo 2.
+   - Se a mensagem traz INFO NOVA DE CADASTRO do cliente (telefone novo, email, mudou de status, nova cidade, proximo passo definido): use atualizar_lead com o lead_id existente e SO os campos que mudaram. Ex: "o telefone do prefeito de Ivate agora e 44 9..." -> atualizar_lead(lead_id=<existente>, telefone="449...").
+   - Para fatos/interacoes ocorridas continue usando registrar_acao; atualizar_lead e so pro CADASTRO do lead.
 
 C) Mensagem trivial (bom dia, "ok", "kk", emoji): arquivar_msg + responder_no_telegram opcional + finalizar.
 
@@ -2079,6 +2162,37 @@ def _execute_tool(tool_name, args, msg_row, msg_id, user_label="Agente IA"):
             except Exception:
                 pass
             return {"ok": True, "id": new_id, "nome": data.get("nome"), "kind": "lead"}
+
+        if tool_name == "atualizar_lead":
+            lead_id = args.get("lead_id")
+            if not lead_id:
+                return {"ok": False, "error": "lead_id obrigatorio"}
+            campos = ("telefone", "email", "status", "cidade", "estado", "proximo_passo")
+            data = {k: args.get(k) for k in campos if args.get(k) is not None}
+            # notas: ACRESCENTA ao texto atual, nunca sobrescreve
+            nova_nota = args.get("notas")
+            if nova_nota:
+                atual = supabase.table("leads").select("nome, notas").eq("id", lead_id).limit(1).execute()
+                if not atual.data:
+                    return {"ok": False, "error": "lead nao encontrado"}
+                notas_atuais = (atual.data[0].get("notas") or "").strip()
+                carimbo = f"[Telegram {datetime.now().strftime('%d/%m')}] {nova_nota}"
+                data["notas"] = (notas_atuais + "\n" + carimbo).strip() if notas_atuais else carimbo
+            if not data:
+                return {"ok": False, "error": "nada pra atualizar"}
+            r = supabase.table("leads").update(data).eq("id", lead_id).execute()
+            nome = r.data[0].get("nome") if r.data else None
+            supabase.table("mensagens_socios").update({
+                "status": "triado",
+                "lead_id": lead_id,
+                "triado_em": datetime.now().isoformat(),
+                "triado_por": user_label
+            }).eq("id", msg_id).execute()
+            try:
+                audit("update", "leads", lead_id, f"Agente IA atualizou lead: {', '.join(data.keys())}")
+            except Exception:
+                pass
+            return {"ok": True, "id": lead_id, "nome": nome, "campos": list(data.keys()), "kind": "lead_update"}
 
         if tool_name == "criar_contato":
             data = {
@@ -2265,6 +2379,17 @@ def classify_message_with_ai(msg_id):
         if not row.data:
             return
         msg = row.data[0]
+
+        # Áudio/voz sem texto: transcreve via Whisper e segue o fluxo normal sobre a fala.
+        if not msg.get("text") and msg.get("attachment_type") in ("voice", "audio"):
+            transcricao = transcrever_audio_telegram(msg.get("attachment_file_id"))
+            if transcricao:
+                supabase.table("mensagens_socios").update({
+                    "text": transcricao,
+                    "transcricao": transcricao
+                }).eq("id", msg_id).execute()
+                msg["text"] = transcricao
+                msg["transcricao"] = transcricao
 
         if not msg.get("text"):
             supabase.table("mensagens_socios").update({

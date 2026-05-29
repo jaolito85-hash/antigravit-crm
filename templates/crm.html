@@ -936,14 +936,56 @@
         .ai-confidence-bar { height: 4px; background: var(--surface); border-radius: 2px; overflow: hidden; margin-bottom: 10px }
         .ai-confidence-bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--red), var(--yellow), var(--green)); transition: width .5s }
 
+        /* Menu mobile — escondidos no desktop */
+        #menu-toggle {
+            display: none;
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            z-index: 70;
+            width: 42px;
+            height: 42px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+            color: var(--text);
+            font-size: 20px;
+            cursor: pointer;
+            align-items: center;
+            justify-content: center
+        }
+
+        #sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, .5);
+            z-index: 49
+        }
+
+        #sidebar-overlay.active {
+            display: block
+        }
+
         @media(max-width:768px) {
+            #menu-toggle {
+                display: flex
+            }
+
             .sidebar {
-                display: none
+                transform: translateX(-100%);
+                transition: transform .25s ease;
+                box-shadow: 2px 0 16px rgba(0, 0, 0, .4)
+            }
+
+            .sidebar.open {
+                transform: translateX(0)
             }
 
             .main {
                 margin-left: 0;
-                padding: 16px
+                padding: 16px;
+                padding-top: 64px
             }
 
             .stats-grid {
@@ -962,6 +1004,9 @@
 </head>
 
 <body>
+    <!-- MENU MOBILE -->
+    <button id="menu-toggle" onclick="toggleSidebar()" aria-label="Abrir menu"><i class="ri-menu-line"></i></button>
+    <div id="sidebar-overlay" onclick="toggleSidebar(false)"></div>
     <!-- SIDEBAR -->
     <div class="sidebar">
         <div class="sidebar-logo">
@@ -1107,9 +1152,6 @@
                 <div class="tk-select">
                     <select id="tarefa-resp" onchange="renderTarefas()">
                         <option value="">Todos responsáveis</option>
-                        <option value="Joao">João</option>
-                        <option value="Guilherme">Guilherme</option>
-                        <option value="Marcos">Marcos</option>
                     </select>
                 </div>
                 <div class="tk-select">
@@ -1579,7 +1621,25 @@
         let leadsCache = [], verticaisCache = [], contratosCache = [], despesasCache = [];
         let categoriasFinCache = [], fornecedoresCache = [], contasCache = [];
         let receitasCache = [], emprestimosCache = [];
+        let responsaveisCache = [];
         let despesaFilter = 'all', receitaFilter = 'all';
+
+        // Carrega os nomes da equipe (responsáveis) e mantém em cache p/ os dropdowns.
+        async function loadResponsaveis() {
+            try {
+                const r = await api('/api/equipe');
+                if (Array.isArray(r)) responsaveisCache = r;
+            } catch (e) { /* mantém cache anterior */ }
+            return responsaveisCache;
+        }
+        // Gera <option>s de responsável a partir do cache; garante que o valor atual
+        // (mesmo nome legado fora do cache) apareça selecionado p/ não se perder em edição.
+        function respOptions(selected) {
+            const nomes = [...responsaveisCache];
+            if (selected && !nomes.includes(selected)) nomes.unshift(selected);
+            const opts = nomes.map(n => `<option value="${n}" ${n === selected ? 'selected' : ''}>${n}</option>`).join('');
+            return (selected ? '' : '<option value=""></option>') + opts;
+        }
         const DESPESA_STATUS = {
             pago: { label: 'Pago', color: '#10b981' },
             a_pagar: { label: 'A pagar', color: '#3b82f6' },
@@ -1777,13 +1837,21 @@
         async function loadTarefas() {
             const [tarefas, todasMsgs] = await Promise.all([
                 api('/api/tarefas'),
-                api('/api/mensagens-socios')
+                api('/api/mensagens-socios'),
+                loadResponsaveis()
             ]);
             tarefasCache = Array.isArray(tarefas) ? tarefas : [];
             mensagensSociosByTarefa = {};
             (Array.isArray(todasMsgs) ? todasMsgs : []).forEach(m => {
                 if (m.tarefa_id) mensagensSociosByTarefa[m.tarefa_id] = m;
             });
+            // Popula o filtro de responsável (mantém "Todos" + a opção atual selecionada)
+            const filtroResp = document.getElementById('tarefa-resp');
+            if (filtroResp) {
+                const atual = filtroResp.value;
+                filtroResp.innerHTML = '<option value="">Todos responsáveis</option>' +
+                    responsaveisCache.map(n => `<option value="${n}" ${n === atual ? 'selected' : ''}>${n}</option>`).join('');
+            }
             renderTarefas();
         }
 
@@ -1983,7 +2051,7 @@
             const today = new Date().toISOString().slice(0, 10);
             const dataVal = t.data_vencimento || today;
             const horaVal = t.hora || '';
-            const respOpts = ['Joao', 'Guilherme', 'Marcos'].map(r => `<option value="${r}" ${t.responsavel === r ? 'selected' : ''}>${r === 'Joao' ? 'João' : r}</option>`).join('');
+            const respOpts = respOptions(t.responsavel);
             const tipoOpts = [['ligacao','Ligação'],['email','Email'],['reuniao','Reunião'],['visita','Visita'],['demo','Demo'],['proposta','Proposta'],['outro','Outro']]
                 .map(([v, l]) => `<option value="${v}" ${t.tipo === v ? 'selected' : ''}>${l}</option>`).join('');
             const prioOpts = [['alta','Alta'],['media','Média'],['baixa','Baixa']]
@@ -2229,7 +2297,8 @@
             el.innerHTML = list.map(m => {
                 const sender = escapeHTML(m.sender_name || m.sender_username || 'Anônimo');
                 const text = escapeHTML(m.text || '');
-                const att = m.attachment_type ? `<div class="inbox-attachment">${attachmentLabel(m.attachment_type)}</div>` : '';
+                const transcritoTag = (m.transcricao && (m.attachment_type === 'voice' || m.attachment_type === 'audio')) ? ' · 🎤 transcrito' : '';
+                const att = m.attachment_type ? `<div class="inbox-attachment">${attachmentLabel(m.attachment_type)}${transcritoTag}</div>` : '';
                 const textHtml = text ? `<div class="inbox-text">${text}</div>` : (m.attachment_type ? '' : '<div class="inbox-text empty">(sem texto)</div>');
                 let footer = '';
                 if (m.status === 'inbox') {
@@ -2271,7 +2340,8 @@
             if (!m) return;
             const sender = escapeHTML(m.sender_name || m.sender_username || 'Anônimo');
             const username = m.sender_username ? `@${escapeHTML(m.sender_username)}` : '';
-            const att = m.attachment_type ? `<div class="inbox-attachment" style="margin-bottom:10px">${attachmentLabel(m.attachment_type)}${m.attachment_file_id ? ' · <code style="font-size:10px;color:var(--text2)">' + escapeHTML(m.attachment_file_id.slice(0, 24)) + '…</code>' : ''}</div>` : '';
+            const transcritoTag = (m.transcricao && (m.attachment_type === 'voice' || m.attachment_type === 'audio')) ? ' · 🎤 transcrito' : '';
+            const att = m.attachment_type ? `<div class="inbox-attachment" style="margin-bottom:10px">${attachmentLabel(m.attachment_type)}${transcritoTag}${m.attachment_file_id ? ' · <code style="font-size:10px;color:var(--text2)">' + escapeHTML(m.attachment_file_id.slice(0, 24)) + '…</code>' : ''}</div>` : '';
             const text = m.text ? `<div class="inbox-text" style="margin-bottom:0">${escapeHTML(m.text)}</div>` : '<div class="inbox-text empty">(sem texto)</div>';
             let acoesBlock = '';
             if (m.status === 'inbox') {
@@ -2405,7 +2475,7 @@
                 .map(([v, l]) => `<option value="${v}" ${p.tipo === v ? 'selected' : ''}>${l}</option>`).join('');
             const prioOpts = [['alta','Alta'],['media','Média'],['baixa','Baixa']]
                 .map(([v, l]) => `<option value="${v}" ${p.prioridade === v ? 'selected' : ''}>${l}</option>`).join('');
-            const respOpts = ['Joao', 'Guilherme', 'Marcos'].map(r => `<option value="${r}" ${p.responsavel === r ? 'selected' : ''}>${r === 'Joao' ? 'João' : r}</option>`).join('');
+            const respOpts = respOptions(p.responsavel);
             const leadOpts = leadsCache.map(l => `<option value="${l.id}" ${p.lead_id === l.id ? 'selected' : ''}>${escapeHTML(l.nome)}</option>`).join('');
             el.innerHTML = `<h3>Editar sugestão da IA antes de criar tarefa</h3>
                 <p style="font-size:12px;color:var(--text2);margin-bottom:14px"><i class="ri-sparkling-2-line" style="color:var(--primary)"></i> ${escapeHTML(m.ai_reasoning || '')}</p>
@@ -2586,7 +2656,7 @@
                     </div>
                     <div class="form-row">
                         <div class="form-group"><label>Data</label><input name="data_vencimento" type="date" required value="${today}"></div>
-                        <div class="form-group"><label>Responsável</label><select name="responsavel" required><option value="Joao">João</option><option value="Guilherme">Guilherme</option><option value="Marcos">Marcos</option></select></div>
+                        <div class="form-group"><label>Responsável</label><select name="responsavel" required>${respOptions()}</select></div>
                     </div>
                     <div class="form-group"><label>Lead (opcional)</label><select name="lead_id"><option value="">— Nenhum —</option>${leadOptions()}</select></div>
                     <div class="form-group"><label>Descrição</label><textarea name="descricao" rows="3">${escapeHTML(m.text || '')}</textarea></div>
@@ -3630,6 +3700,9 @@
                 verticaisCache = await api('/api/verticais');
                 leadsCache = await api('/api/leads');
             }
+            if ((type === 'lead' || type === 'tarefa' || type === 'contrato') && !responsaveisCache.length) {
+                await loadResponsaveis();
+            }
             if (type === 'despesa' && !categoriasFinCache.length) {
                 const [cats, forns, contas] = await Promise.all([
                     api('/api/categorias-financeiras'), api('/api/fornecedores'), api('/api/contas'),
@@ -3683,7 +3756,7 @@
     <div class="form-row"><div class="form-group"><label>Cidade</label><input name="cidade" value="${data?.cidade || ''}"></div><div class="form-group"><label>Estado</label><input name="estado" value="${data?.estado || 'MG'}" maxlength="2"></div></div>
     <div class="form-row"><div class="form-group"><label>Celular</label><input name="celular" id="phone-input" value="${data?.celular || ''}" placeholder="(31) 99999-9999" maxlength="16"></div><div class="form-group"><label>Email</label><input name="email" type="email" value="${data?.email || ''}"></div></div>
     <div class="form-row"><div class="form-group"><label>Status</label><select name="status"><option value="Novo" ${data?.status == 'Novo' ? 'selected' : ''}>Novo</option><option value="Em Prospecção" ${data?.status == 'Em Prospecção' ? 'selected' : ''}>Em Prospecção</option><option value="Qualificado" ${data?.status == 'Qualificado' ? 'selected' : ''}>Qualificado</option><option value="Em Negociação" ${data?.status == 'Em Negociação' ? 'selected' : ''}>Em Negociação</option><option value="Proposta" ${data?.status == 'Proposta' ? 'selected' : ''}>Proposta</option><option value="Fechado" ${data?.status == 'Fechado' ? 'selected' : ''}>Fechado / Ativo</option><option value="Perdido" ${data?.status == 'Perdido' ? 'selected' : ''}>Perdido</option><option value="Pausado" ${data?.status == 'Pausado' ? 'selected' : ''}>Pausado</option></select></div><div class="form-group"><label>Temperatura</label><select name="temperatura"><option value="frio" ${data?.temperatura == 'frio' ? 'selected' : ''}>🧊 Frio</option><option value="morno" ${data?.temperatura == 'morno' ? 'selected' : ''}>🌤️ Morno</option><option value="quente" ${data?.temperatura == 'quente' ? 'selected' : ''}>🔥 Quente</option></select></div></div>
-    <div class="form-row"><div class="form-group"><label>Valor Mensal (R$)</label><input name="valor_mensal" type="number" step="0.01" value="${data?.valor_mensal || ''}"></div><div class="form-group"><label>Responsável</label><select name="responsavel"><option value="Joao" ${data?.responsavel == 'Joao' ? 'selected' : ''}>João</option><option value="Guilherme" ${data?.responsavel == 'Guilherme' ? 'selected' : ''}>Guilherme</option></select></div></div>
+    <div class="form-row"><div class="form-group"><label>Valor Mensal (R$)</label><input name="valor_mensal" type="number" step="0.01" value="${data?.valor_mensal || ''}"></div><div class="form-group"><label>Responsável</label><select name="responsavel">${respOptions(data?.responsavel)}</select></div></div>
     <div class="form-group"><label>URL do Deploy</label><input name="deploy_url" value="${data?.deploy_url || ''}" placeholder="https://..."></div>
     <div class="form-group"><label>Notas</label><textarea name="notas" rows="2">${data?.notas || ''}</textarea></div>
     <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">${isEdit ? 'Atualizar' : 'Salvar'}</button></div></form>`;
@@ -3926,7 +3999,7 @@
                     </div>
                     <div class="form-row">
                         <div class="form-group"><label>Data</label><input name="data_vencimento" type="date" required value="${today}"></div>
-                        <div class="form-group"><label>Responsável</label><select name="responsavel" required><option value="Joao">João</option><option value="Guilherme">Guilherme</option><option value="Marcos">Marcos</option></select></div>
+                        <div class="form-group"><label>Responsável</label><select name="responsavel" required>${respOptions()}</select></div>
                     </div>
                     <div class="form-group"><label>Descrição</label><textarea name="descricao" rows="3"></textarea></div>
                     <div class="form-actions">
@@ -3969,7 +4042,7 @@
                             <option value="contrato_assinado">✍️ Contrato assinado</option>
                             <option value="anotacao">📝 Anotação</option>
                         </select></div>
-                        <div class="form-group"><label>Responsável</label><select name="responsavel" required><option value="Joao">João</option><option value="Guilherme">Guilherme</option><option value="Marcos">Marcos</option></select></div>
+                        <div class="form-group"><label>Responsável</label><select name="responsavel" required>${respOptions()}</select></div>
                     </div>
                     <div class="form-group"><label>Descrição</label><textarea name="descricao" rows="3" required></textarea></div>
                     <div class="form-group"><label>Resultado / Próxima ação</label><input name="resultado" placeholder="Ex: marcou demo pra terça"></div>
@@ -4109,7 +4182,7 @@
             return `<h3>Nova Tarefa</h3><form onsubmit="saveTarefa(event)">
     <div class="form-group"><label>Título</label><input name="titulo" required></div>
     <div class="form-row"><div class="form-group"><label>Tipo</label><select name="tipo"><option value="ligacao">Ligação</option><option value="email">Email</option><option value="reuniao">Reunião</option><option value="visita">Visita</option><option value="demo">Demo</option><option value="proposta">Proposta</option><option value="outro">Outro</option></select></div><div class="form-group"><label>Prioridade</label><select name="prioridade"><option value="media">Média</option><option value="alta">Alta</option><option value="baixa">Baixa</option></select></div></div>
-    <div class="form-row"><div class="form-group"><label>Data</label><input name="data_vencimento" type="date" required></div><div class="form-group"><label>Responsável</label><select name="responsavel"><option value="Joao">João</option><option value="Guilherme">Guilherme</option></select></div></div>
+    <div class="form-row"><div class="form-group"><label>Data</label><input name="data_vencimento" type="date" required></div><div class="form-group"><label>Responsável</label><select name="responsavel">${respOptions()}</select></div></div>
     <div class="form-group"><label>Lead (opcional)</label><select name="lead_id"><option value="">— Nenhum —</option>${leadOptions()}</select></div>
     <div class="form-group"><label>Descrição</label><textarea name="descricao" rows="2"></textarea></div>
     <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div></form>`;
@@ -4386,7 +4459,21 @@
         }
         async function saveUser(e) { const r = await api('/api/users', { method: 'POST', body: formData(e) }); if (r.error) alert(r.error); else { closeModal(); loadUsers(); } }
 
+        // === MENU MOBILE ===
+        function toggleSidebar(force) {
+            const sb = document.querySelector('.sidebar');
+            const ov = document.getElementById('sidebar-overlay');
+            if (!sb) return;
+            const open = force === undefined ? !sb.classList.contains('open') : force;
+            sb.classList.toggle('open', open);
+            if (ov) ov.classList.toggle('active', open);
+        }
+        // No mobile, fechar a sidebar ao escolher um item de menu
+        document.querySelectorAll('.nav-item').forEach(el =>
+            el.addEventListener('click', () => { if (window.innerWidth <= 768) toggleSidebar(false); }));
+
         // === INIT ===
+        loadResponsaveis();
         loadDashboard();
     </script>
 </body>
