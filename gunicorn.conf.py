@@ -24,7 +24,8 @@ def when_ready(server):
     """Sobe os jobs de background UMA única vez no master.
     O bloco `if __name__ == '__main__'` do server.py NÃO roda sob Gunicorn, então
     sem isto o Health Monitor não iniciaria e os alertas dos clientes parariam."""
-    from server import ensure_admin_exists, start_health_monitor
+    from server import ensure_admin_exists, start_health_monitor, start_task_reminder
     ensure_admin_exists()
     start_health_monitor()
-    server.log.info("✅ ensure_admin + health monitor iniciados (when_ready)")
+    start_task_reminder()
+    server.log.info("✅ ensure_admin + health monitor + lembrete de tarefas iniciados (when_ready)")

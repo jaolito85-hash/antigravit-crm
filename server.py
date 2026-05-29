@@ -3077,6 +3077,88 @@ def api_reclassificar_ia(msg_id):
 
 
 # ============================================================
+# LEMBRETE DE TAREFAS ATRASADAS (Telegram — 1x/dia às 08h BR)
+# ============================================================
+
+def _tarefas_atrasadas():
+    """Tarefas não concluídas, vencidas antes de hoje (fuso BR) e não arquivadas."""
+    if not supabase:
+        return []
+    try:
+        r = supabase.table("tarefas").select(
+            "id, titulo, responsavel, data_vencimento, leads(nome)"
+        ).is_null("deleted_at").eq("concluida", False).lt("data_vencimento", hoje_br()).order("data_vencimento").execute()
+        return r.data or []
+    except Exception as e:
+        print(f"⚠️ _tarefas_atrasadas erro: {e}")
+        return []
+
+
+def _formata_lembrete_atrasadas(tarefas):
+    """Texto HTML do lembrete, agrupado por responsável, com dias de atraso."""
+    from collections import defaultdict
+    por_resp = defaultdict(list)
+    for t in tarefas:
+        por_resp[t.get("responsavel") or "Sem responsável"].append(t)
+    hoje_dt = datetime.strptime(hoje_br(), "%Y-%m-%d")
+    linhas = [f"⏰ <b>Tarefas atrasadas</b> ({len(tarefas)})"]
+    for resp in sorted(por_resp):
+        linhas.append(f"\n👤 <b>{resp}</b>")
+        for t in por_resp[resp]:
+            try:
+                dias = (hoje_dt - datetime.strptime(t.get("data_vencimento") or "", "%Y-%m-%d")).days
+                atraso = f" <i>({dias}d)</i>" if dias > 0 else ""
+            except Exception:
+                atraso = ""
+            titulo = (t.get("titulo") or "(sem título)").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            lead = (t.get("leads") or {}).get("nome")
+            lead_txt = f" — {lead}" if lead else ""
+            linhas.append(f"  • {titulo}{lead_txt}{atraso}")
+    return "\n".join(linhas)
+
+
+def enviar_lembrete_atrasadas():
+    """Manda o resumo de tarefas atrasadas no Telegram. Silencioso se não houver."""
+    tarefas = _tarefas_atrasadas()
+    if not tarefas:
+        print("⏰ [LEMBRETE] Nenhuma tarefa atrasada — nada a enviar")
+        return
+    enviado = send_telegram_message(_formata_lembrete_atrasadas(tarefas))
+    print(f"⏰ [LEMBRETE] {len(tarefas)} atrasada(s) — enviado: {bool(enviado)}")
+
+
+def _segundos_ate(hora=8, minuto=0):
+    """Segundos da hora atual até o próximo horário alvo no fuso BR."""
+    agora = datetime.now(BR_TZ)
+    alvo = agora.replace(hour=hora, minute=minuto, second=0, microsecond=0)
+    if alvo <= agora:
+        alvo += timedelta(days=1)
+    return (alvo - agora).total_seconds()
+
+
+def _task_reminder_loop():
+    """Dispara o lembrete uma vez por dia às 08h (fuso BR)."""
+    import time as _time
+    while True:
+        try:
+            _time.sleep(_segundos_ate(8, 0))
+            enviar_lembrete_atrasadas()
+            _time.sleep(60)  # passa do minuto alvo p/ não recalcular pro mesmo horário
+        except Exception as e:
+            print(f"⚠️ task_reminder_loop erro: {e}")
+            _time.sleep(3600)
+
+
+def start_task_reminder():
+    """Inicia a thread do lembrete diário. Desliga sozinho se o Telegram não estiver configurado."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_ALLOWED_CHAT_ID:
+        print("⏰ [LEMBRETE] Telegram não configurado — lembrete de tarefas desligado")
+        return
+    threading.Thread(target=_task_reminder_loop, daemon=True, name="task-reminder").start()
+    print("⏰ [LEMBRETE] Thread de lembrete de tarefas atrasadas iniciada (08h BR)")
+
+
+# ============================================================
 # LIXEIRA — soft-delete reversível (admin)
 # ============================================================
 # Tabelas com soft-delete e qual coluna usar como título do item na Lixeira.
@@ -3537,6 +3619,7 @@ def api_email_vincular():
 if __name__ == "__main__":
     ensure_admin_exists()
     start_health_monitor()
+    start_task_reminder()
     port = int(os.getenv("PORT", 5010))
     print(f"🚀 CRM Node Data running on port {port}")
     if supabase:
