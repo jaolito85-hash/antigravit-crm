@@ -2013,17 +2013,20 @@
                 const nova = tarefaNova(t);
                 const iminente = tarefaIminente(t);
                 const dvenc = diasAteVenc(t);
+                const horaFmt = t.hora ? String(t.hora).slice(0, 5) : '';
                 let alertaPill = '';
                 if (nova) alertaPill += `<span class="pill nova-pill">🆕 Nova</span>`;
                 if (iminente) {
                     const quando = dvenc === 0 ? '🔴 Hoje' : '🟠 Amanhã';
-                    alertaPill += `<span class="pill iminente-pill">${quando}${t.hora ? ' ' + String(t.hora).slice(0, 5) : ''}</span>`;
+                    alertaPill += `<span class="pill iminente-pill">${quando}</span>`;
                 }
 
                 const prioPill = t.prioridade ? `<span class="pill ${t.prioridade}">${PRIO_LABEL[t.prioridade] || t.prioridade}</span>` : '';
+                // No lugar do antigo selo "Telegram" (todas vêm de lá), mostramos o
+                // horário marcado; sem hora, cai pro tipo da tarefa (Reunião, Ligação...).
                 let canalPill = '';
-                if (origem) {
-                    canalPill = `<span class="pill pill-canal" title="Veio da Caixa de Entrada"><i class="ri-telegram-2-line" style="color:#2aabee"></i> Telegram</span>`;
+                if (horaFmt) {
+                    canalPill = `<span class="pill pill-canal"><i class="ri-time-line"></i> ${horaFmt}</span>`;
                 } else if (t.tipo && TIPO_META[t.tipo]) {
                     canalPill = `<span class="pill pill-canal"><i class="${TIPO_META[t.tipo].icon}"></i> ${TIPO_META[t.tipo].label}</span>`;
                 }

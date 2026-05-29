@@ -8,9 +8,19 @@ import secrets
 import requests
 import re
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from dotenv import load_dotenv
+
+# Fuso do Brasil (UTC-3, sem horário de verão desde 2019). O servidor (Coolify/VPS)
+# roda em UTC; usar isto para qualquer DATA que o usuário/agente enxerga, senão à noite
+# "hoje" vira o dia seguinte e o agente marca reuniões no dia errado.
+BR_TZ = timezone(timedelta(hours=-3))
+
+
+def hoje_br():
+    """Data de hoje (YYYY-MM-DD) no fuso do Brasil."""
+    return datetime.now(BR_TZ).strftime("%Y-%m-%d")
 
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for, flash, make_response
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -1759,6 +1769,7 @@ AI_TOOLS = [
                     "descricao": {"type": ["string", "null"], "description": "Contexto util da mensagem original"},
                     "responsavel": {"type": "string", "description": "Nome de alguem da EQUIPE listada no system prompt. Default = quem mandou a mensagem."},
                     "data_vencimento": {"type": "string", "description": "Data ISO YYYY-MM-DD. Calcule de DATA DE HOJE pra termos relativos (amanha, sexta, semana que vem)."},
+                    "hora": {"type": ["string", "null"], "description": "Horario HH:MM (24h) quando a mensagem menciona horario. Ex: reuniao 10h -> '10:00', 14h30 -> '14:30'. null se nao houver."},
                     "prioridade": {"type": "string", "enum": ["alta", "media", "baixa"]},
                     "tipo": {"type": "string", "enum": ["ligacao", "email", "reuniao", "visita", "demo", "proposta", "outro"]},
                     "lead_id": {"type": ["string", "null"], "description": "UUID do lead vinculado ou null"}
@@ -2005,7 +2016,7 @@ def _build_agent_system_prompt():
         for v in verticais_data
     ) or "(nenhuma vertical)"
 
-    hoje = datetime.now().strftime("%Y-%m-%d")
+    hoje = hoje_br()
     return f"""Voce e o AGENTE OPERACIONAL da Node Data — empresa que vende software de inteligencia (analise de sentimento de cidadaos via WhatsApp) para PREFEITURAS e CAMPANHAS POLITICAS.
 
 EQUIPE / RESPONSAVEIS VALIDOS (use exatamente estes nomes ao atribuir tarefas):
@@ -2176,7 +2187,7 @@ def _execute_tool(tool_name, args, msg_row, msg_id, user_label="Agente IA"):
                 if not atual.data:
                     return {"ok": False, "error": "lead nao encontrado"}
                 notas_atuais = (atual.data[0].get("notas") or "").strip()
-                carimbo = f"[Telegram {datetime.now().strftime('%d/%m')}] {nova_nota}"
+                carimbo = f"[Telegram {datetime.now(BR_TZ).strftime('%d/%m')}] {nova_nota}"
                 data["notas"] = (notas_atuais + "\n" + carimbo).strip() if notas_atuais else carimbo
             if not data:
                 return {"ok": False, "error": "nada pra atualizar"}
@@ -2219,7 +2230,8 @@ def _execute_tool(tool_name, args, msg_row, msg_id, user_label="Agente IA"):
                 "titulo": (args.get("titulo") or "(sem titulo)")[:200],
                 "descricao": args.get("descricao") or (msg_row or {}).get("text"),
                 "responsavel": args.get("responsavel") or sender,
-                "data_vencimento": args.get("data_vencimento") or datetime.now().strftime("%Y-%m-%d"),
+                "data_vencimento": args.get("data_vencimento") or hoje_br(),
+                "hora": args.get("hora"),
                 "prioridade": args.get("prioridade") or "media",
                 "tipo": args.get("tipo") or "outro",
                 "lead_id": args.get("lead_id"),
@@ -2925,7 +2937,8 @@ def api_aprovar_ia(msg_id):
                 "titulo": (payload.get("titulo") or "(sem titulo)")[:200],
                 "descricao": payload.get("descricao") or msg.get("text"),
                 "responsavel": payload.get("responsavel") or user,
-                "data_vencimento": payload.get("data_vencimento") or datetime.now().strftime("%Y-%m-%d"),
+                "data_vencimento": payload.get("data_vencimento") or hoje_br(),
+                "hora": payload.get("hora"),
                 "prioridade": payload.get("prioridade") or "media",
                 "tipo": payload.get("tipo") or "outro",
                 "lead_id": payload.get("lead_id"),
