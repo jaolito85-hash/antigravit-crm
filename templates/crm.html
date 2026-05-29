@@ -3934,6 +3934,15 @@
             else { badge.style.display = 'none'; }
         }
 
+        // Atualiza o badge de não-lidos sem precisar abrir a aba. Roda em background
+        // no boot — não bloqueia o carregamento e ignora falha de IMAP silenciosamente.
+        async function refreshEmailBadge() {
+            try {
+                const r = await api('/api/emails');
+                if (Array.isArray(r)) { emailsCache = r; updateEmailNavBadge(); }
+            } catch (e) { /* IMAP lento/offline: badge fica como está */ }
+        }
+
         async function loadEmail(force) {
             const box = document.getElementById('email-list');
             box.innerHTML = '<div class="tab-empty"><i class="ri-loader-4-line"></i> Carregando caixa…</div>';
@@ -4853,6 +4862,7 @@
         // === INIT ===
         loadResponsaveis();
         loadDashboard();
+        refreshEmailBadge();
     </script>
 </body>
 
