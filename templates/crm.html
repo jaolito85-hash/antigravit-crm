@@ -1098,6 +1098,7 @@
             {% if role == 'admin' %}
             <div class="nav-section">Admin</div>
             <div class="nav-item" data-view="users"><i class="ri-shield-user-line"></i>Usuários</div>
+            <div class="nav-item" data-view="lixeira"><i class="ri-delete-bin-line"></i>Lixeira</div>
             <div class="nav-item" data-view="audit"><i class="ri-history-line"></i>Audit Log</div>
             {% endif %}
         </div>
@@ -1679,6 +1680,17 @@
             <div id="email-list"></div>
         </div>
 
+        <div class="view" id="view-lixeira">
+            <div class="page-header">
+                <div>
+                    <h1>Lixeira</h1>
+                    <p>Itens arquivados (leads, tarefas, documentos, despesas, receitas). Restaure ou exclua definitivamente.</p>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="loadLixeira()"><i class="ri-refresh-line"></i> Atualizar</button>
+            </div>
+            <div id="lixeira-list"></div>
+        </div>
+
     </div><!-- /main -->
 
     <!-- MODAL -->
@@ -1781,6 +1793,7 @@
             else if (v === 'caixa') await loadCaixaEntrada();
             else if (v === 'email') await loadEmail();
             else if (v === 'users') await loadUsers();
+            else if (v === 'lixeira') await loadLixeira();
             else if (v === 'audit') await loadAudit();
         }
 
@@ -2292,7 +2305,7 @@
         }
 
         async function deleteTarefaFromDetail(id, titulo) {
-            if (!confirm(`Excluir tarefa "${titulo}"? Esta ação não pode ser desfeita.`)) return;
+            if (!confirm(`Mover tarefa "${titulo}" para a Lixeira? Dá pra restaurar depois.`)) return;
             const r = await api('/api/tarefas/' + id, { method: 'DELETE' });
             if (r.error) { alert('Erro: ' + r.error); return; }
             closeModal();
@@ -3298,7 +3311,7 @@
         }
 
         async function deleteReceita(id, descricao) {
-            if (!confirm(`Excluir receita "${descricao}"? Esta ação não pode ser desfeita.`)) return;
+            if (!confirm(`Mover receita "${descricao}" para a Lixeira? Dá pra restaurar depois.`)) return;
             await api('/api/receitas/' + id, { method: 'DELETE' });
             loadReceitas();
         }
@@ -3922,6 +3935,44 @@
 
         // === LEAD DETAIL 360 ===
         let leadDetailCurrent = null;
+
+        // ===================== LIXEIRA (admin) =====================
+        const LIXEIRA_ICONS = { 'Lead': 'ri-contacts-book-line', 'Tarefa': 'ri-checkbox-circle-line', 'Documento': 'ri-folder-2-line', 'Despesa': 'ri-money-dollar-circle-line', 'Receita': 'ri-arrow-up-circle-line' };
+
+        async function loadLixeira() {
+            const box = document.getElementById('lixeira-list');
+            box.innerHTML = '<div class="tab-empty"><i class="ri-loader-4-line"></i> Carregando…</div>';
+            const r = await api('/api/lixeira');
+            if (r && r.error) { box.innerHTML = `<div class="tab-empty" style="color:var(--red)">⚠️ ${escapeHTML(r.error)}</div>`; return; }
+            const list = Array.isArray(r) ? r : [];
+            if (!list.length) { box.innerHTML = '<div class="tab-empty">🗑️ Lixeira vazia.</div>'; return; }
+            box.innerHTML = list.map(it => `
+                <div class="ld-card">
+                    <div style="display:flex;justify-content:space-between;gap:12px;align-items:center">
+                        <div style="min-width:0">
+                            <div class="ld-card-title"><i class="${LIXEIRA_ICONS[it.tipo] || 'ri-file-line'}"></i> ${escapeHTML(it.titulo)} <span class="badge-mini">${escapeHTML(it.tipo)}</span></div>
+                            <div class="ld-card-meta"><span>Apagado por ${escapeHTML(it.deleted_by || '—')}</span><span>${fmtDateTime(it.deleted_at)}</span></div>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-shrink:0">
+                            <button class="btn btn-sm btn-primary" onclick="restaurarItem('${it.tabela}','${it.id}')"><i class="ri-arrow-go-back-line"></i> Restaurar</button>
+                            <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="excluirItemDefinitivo('${it.tabela}','${it.id}')"><i class="ri-delete-bin-line"></i> Excluir definitivo</button>
+                        </div>
+                    </div>
+                </div>`).join('');
+        }
+
+        async function restaurarItem(tabela, id) {
+            const r = await api('/api/lixeira/restaurar', { method: 'POST', body: { tabela, id } });
+            if (!r || r.error) { alert('Erro ao restaurar: ' + ((r && r.error) || 'desconhecido')); return; }
+            loadLixeira();
+        }
+
+        async function excluirItemDefinitivo(tabela, id) {
+            if (!confirm('Excluir DEFINITIVAMENTE? Esta ação é irreversível — o registro será apagado de vez do banco.')) return;
+            const r = await api(`/api/lixeira/${tabela}/${id}`, { method: 'DELETE' });
+            if (!r || r.error) { alert('Erro: ' + ((r && r.error) || 'desconhecido')); return; }
+            loadLixeira();
+        }
 
         // ===================== E-MAIL =====================
         let emailsCache = [];
@@ -4548,7 +4599,7 @@
         }
 
         async function deleteLead(id, nome) {
-            if (!confirm(`Excluir lead "${nome}"? Esta ação não pode ser desfeita.`)) return;
+            if (!confirm(`Mover lead "${nome}" para a Lixeira? Dá pra restaurar depois.`)) return;
             await api('/api/leads/' + id, { method: 'DELETE' });
             loadLeads(); loadDashboard();
         }
@@ -4725,7 +4776,7 @@
             if (typeof loadDocEmpresa === 'function') loadDocEmpresa();
         }
         async function deleteDocumento(id, titulo) {
-            if (!confirm(`Excluir documento "${titulo}"? Esta ação não pode ser desfeita.`)) return;
+            if (!confirm(`Mover documento "${titulo}" para a Lixeira? Dá pra restaurar depois.`)) return;
             await api('/api/documentos/' + id, { method: 'DELETE' });
             loadDocumentos();
             if (typeof loadDocEmpresa === 'function') loadDocEmpresa();
@@ -4840,7 +4891,7 @@
             }
         }
         async function deleteDespesa(id, descricao) {
-            if (!confirm(`Excluir despesa "${descricao}"? Esta ação não pode ser desfeita.`)) return;
+            if (!confirm(`Mover despesa "${descricao}" para a Lixeira? Dá pra restaurar depois.`)) return;
             await api('/api/despesas/' + id, { method: 'DELETE' });
             loadDespesas();
         }

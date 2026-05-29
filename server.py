@@ -99,6 +99,16 @@ class SupabaseTable:
         self._params[col] = f"neq.{val}"
         return self
 
+    def is_null(self, col):
+        """Filtra col IS NULL (PostgREST is.null). Usado p/ excluir soft-deleted."""
+        self._params[col] = "is.null"
+        return self
+
+    def not_null(self, col):
+        """Filtra col IS NOT NULL (PostgREST not.is.null). Usado p/ listar a Lixeira."""
+        self._params[col] = "not.is.null"
+        return self
+
     def gt(self, col, val):
         self._params[col] = f"gt.{val}"
         return self
@@ -249,6 +259,15 @@ def audit(action, target_table=None, target_id=None, details=None):
         print(f"Audit log error: {e}")
 
 
+def _soft_delete(table, row_id):
+    """Arquiva o registro (deleted_at/deleted_by) em vez de apagar. Reversível
+    via Lixeira. Tabelas suportadas: leads, tarefas, documentos, despesas, receitas."""
+    return supabase.table(table).update({
+        "deleted_at": datetime.now(BR_TZ).isoformat(),
+        "deleted_by": session.get("display_name", "")
+    }).eq("id", row_id).execute()
+
+
 # ============================================================
 # AUTH ROUTES
 # ============================================================
@@ -331,7 +350,7 @@ def api_stats():
 
     try:
         # Leads count by status
-        leads = supabase.table("leads").select("id, status, valor_mensal, valor_setup, valor_fechado, created_at, vertical_id").execute()
+        leads = supabase.table("leads").select("id, status, valor_mensal, valor_setup, valor_fechado, created_at, vertical_id").is_null("deleted_at").execute()
         all_leads = leads.data or []
 
         total = len(all_leads)
@@ -353,7 +372,7 @@ def api_stats():
                 new_this_month += 1
 
         # Tarefas pendentes
-        tarefas = supabase.table("tarefas").select("id, concluida, data_vencimento").eq("concluida", False).execute()
+        tarefas = supabase.table("tarefas").select("id, concluida, data_vencimento").is_null("deleted_at").eq("concluida", False).execute()
         pending_tasks = len(tarefas.data or [])
         overdue = 0
         for t in (tarefas.data or []):
@@ -367,12 +386,12 @@ def api_stats():
 
         # Resultado financeiro do mês corrente (receitas recebidas − despesas pagas)
         mes_atual = now.strftime("%Y-%m")
-        receitas = supabase.table("receitas").select("valor, data, status").execute()
+        receitas = supabase.table("receitas").select("valor, data, status").is_null("deleted_at").execute()
         receitas_mes = sum(
             float(r.get("valor", 0)) for r in (receitas.data or [])
             if r.get("status") != "cancelado" and (r.get("data") or "")[:7] == mes_atual
         )
-        despesas = supabase.table("despesas").select("valor, data, status").execute()
+        despesas = supabase.table("despesas").select("valor, data, status").is_null("deleted_at").execute()
         despesas_mes = sum(
             float(d.get("valor", 0)) for d in (despesas.data or [])
             if d.get("status") != "cancelado" and (d.get("data") or "")[:7] == mes_atual
@@ -409,7 +428,7 @@ def api_leads():
     try:
         result = supabase.table("leads").select(
             "*, verticais(codigo, nome, icone)"
-        ).order("created_at", desc=True).execute()
+        ).is_null("deleted_at").order("created_at", desc=True).execute()
         return jsonify(result.data or [])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -456,8 +475,8 @@ def api_delete_lead(lead_id):
         # Get lead name for audit
         lead = supabase.table("leads").select("nome").eq("id", lead_id).execute()
         nome = lead.data[0]["nome"] if lead.data else "unknown"
-        supabase.table("leads").delete().eq("id", lead_id).execute()
-        audit("delete", "leads", lead_id, f"Deletado: {nome}")
+        _soft_delete("leads", lead_id)
+        audit("soft_delete", "leads", lead_id, f"Arquivado p/ Lixeira: {nome}")
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -491,7 +510,7 @@ def api_tarefas():
     try:
         result = supabase.table("tarefas").select(
             "*, leads(nome, status, cidade, estado)"
-        ).order("data_vencimento").execute()
+        ).is_null("deleted_at").order("data_vencimento").execute()
         return jsonify(result.data or [])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -549,8 +568,8 @@ def api_delete_tarefa(tarefa_id):
     if not supabase:
         return jsonify({"error": "DB offline"}), 503
     try:
-        supabase.table("tarefas").delete().eq("id", tarefa_id).execute()
-        audit("delete", "tarefas", tarefa_id)
+        _soft_delete("tarefas", tarefa_id)
+        audit("soft_delete", "tarefas", tarefa_id)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -617,7 +636,7 @@ def api_documentos():
     try:
         result = supabase.table("documentos").select(
             "*, leads(nome), contratos(nome), entidades(razao_social)"
-        ).order("created_at", desc=True).execute()
+        ).is_null("deleted_at").order("created_at", desc=True).execute()
         return jsonify(result.data or [])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -751,8 +770,8 @@ def api_delete_documento(doc_id):
     if not supabase:
         return jsonify({"error": "DB offline"}), 503
     try:
-        supabase.table("documentos").delete().eq("id", doc_id).execute()
-        audit("delete", "documentos", doc_id)
+        _soft_delete("documentos", doc_id)
+        audit("soft_delete", "documentos", doc_id)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -834,7 +853,7 @@ def api_despesas():
     try:
         result = supabase.table("despesas").select(
             "*, verticais(nome, icone, codigo), categorias_financeiras(nome, cor, icone), fornecedores(nome), contas_bancarias(nome)"
-        ).order("data", desc=True).execute()
+        ).is_null("deleted_at").order("data", desc=True).execute()
         return jsonify(result.data or [])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -877,8 +896,8 @@ def api_delete_despesa(despesa_id):
     if not supabase:
         return jsonify({"error": "DB offline"}), 503
     try:
-        supabase.table("despesas").delete().eq("id", despesa_id).execute()
-        audit("delete", "despesas", despesa_id)
+        _soft_delete("despesas", despesa_id)
+        audit("soft_delete", "despesas", despesa_id)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -896,7 +915,7 @@ def api_receitas():
     try:
         result = supabase.table("receitas").select(
             "*, categorias_financeiras(nome, cor, icone), fornecedores(nome), contas_bancarias(nome), leads(nome)"
-        ).order("data", desc=True).execute()
+        ).is_null("deleted_at").order("data", desc=True).execute()
         return jsonify(result.data or [])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -939,8 +958,8 @@ def api_delete_receita(receita_id):
     if not supabase:
         return jsonify({"error": "DB offline"}), 503
     try:
-        supabase.table("receitas").delete().eq("id", receita_id).execute()
-        audit("delete", "receitas", receita_id)
+        _soft_delete("receitas", receita_id)
+        audit("soft_delete", "receitas", receita_id)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1132,7 +1151,7 @@ def api_health_check():
     if not supabase:
         return jsonify([])
     try:
-        result = supabase.table("leads").select("id, nome, deploy_url, status, verticais(nome, icone)").execute()
+        result = supabase.table("leads").select("id, nome, deploy_url, status, verticais(nome, icone)").is_null("deleted_at").execute()
         leads_with_deploy = [l for l in (result.data or []) if l.get("deploy_url")]
         return jsonify(leads_with_deploy)
     except Exception as e:
@@ -1147,7 +1166,7 @@ def api_run_health_check():
     if not supabase:
         return jsonify({"error": "DB offline"}), 503
     try:
-        result = supabase.table("leads").select("id, nome, deploy_url").execute()
+        result = supabase.table("leads").select("id, nome, deploy_url").is_null("deleted_at").execute()
         leads_with_deploy = [l for l in (result.data or []) if l.get("deploy_url")]
         results = []
         for lead in leads_with_deploy:
@@ -2013,7 +2032,7 @@ def _build_agent_system_prompt():
     leads_data, verticais_data, equipe_data = [], [], []
     if supabase:
         try:
-            r = supabase.table("leads").select("id, nome, status, cidade, estado, verticais(nome)").limit(500).execute()
+            r = supabase.table("leads").select("id, nome, status, cidade, estado, verticais(nome)").is_null("deleted_at").limit(500).execute()
             leads_data = r.data or []
         except Exception:
             pass
@@ -2167,7 +2186,7 @@ def _execute_tool(tool_name, args, msg_row, msg_id, user_label="Agente IA"):
             q = (args.get("query") or "").lower().strip()
             if not q:
                 return {"ok": True, "matches": []}
-            r = supabase.table("leads").select("id, nome, cidade, estado, status").limit(200).execute()
+            r = supabase.table("leads").select("id, nome, cidade, estado, status").is_null("deleted_at").limit(200).execute()
             matches = []
             for l in (r.data or []):
                 blob = ((l.get("nome") or "") + " " + (l.get("cidade") or "") + " " + (l.get("estado") or "")).lower()
@@ -3058,6 +3077,90 @@ def api_reclassificar_ia(msg_id):
 
 
 # ============================================================
+# LIXEIRA — soft-delete reversível (admin)
+# ============================================================
+# Tabelas com soft-delete e qual coluna usar como título do item na Lixeira.
+SOFT_DELETE_TABLES = {
+    "leads":      {"label": "Lead",      "title": "nome"},
+    "tarefas":    {"label": "Tarefa",    "title": "titulo"},
+    "documentos": {"label": "Documento", "title": "titulo"},
+    "despesas":   {"label": "Despesa",   "title": "descricao"},
+    "receitas":   {"label": "Receita",   "title": "descricao"},
+}
+
+
+@app.route("/api/lixeira")
+@login_required
+@admin_required
+def api_lixeira():
+    """Lista os itens arquivados (deleted_at != null) das tabelas com soft-delete."""
+    if not supabase:
+        return jsonify([])
+    itens = []
+    for tabela, meta in SOFT_DELETE_TABLES.items():
+        try:
+            r = supabase.table(tabela).select(
+                f"id, deleted_at, deleted_by, {meta['title']}"
+            ).not_null("deleted_at").order("deleted_at", desc=True).execute()
+            for row in (r.data or []):
+                itens.append({
+                    "tabela": tabela,
+                    "tipo": meta["label"],
+                    "id": row.get("id"),
+                    "titulo": row.get(meta["title"]) or "(sem título)",
+                    "deleted_at": row.get("deleted_at"),
+                    "deleted_by": row.get("deleted_by"),
+                })
+        except Exception as e:
+            print(f"⚠️ api_lixeira erro em {tabela}: {e}")
+    itens.sort(key=lambda x: x.get("deleted_at") or "", reverse=True)
+    return jsonify(itens)
+
+
+@app.route("/api/lixeira/restaurar", methods=["POST"])
+@login_required
+@admin_required
+def api_lixeira_restaurar():
+    """Restaura um item arquivado (deleted_at = null)."""
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    data = request.json or {}
+    tabela = data.get("tabela")
+    row_id = data.get("id")
+    if tabela not in SOFT_DELETE_TABLES or not row_id:
+        return jsonify({"error": "tabela ou id inválido"}), 400
+    try:
+        supabase.table(tabela).update({"deleted_at": None, "deleted_by": None}).eq("id", row_id).execute()
+        audit("restore", tabela, row_id, "Restaurado da Lixeira")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/lixeira/<tabela>/<row_id>", methods=["DELETE"])
+@login_required
+@admin_required
+def api_lixeira_excluir_definitivo(tabela, row_id):
+    """Exclusão DEFINITIVA (hard delete) de item já na Lixeira. Irreversível."""
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    if tabela not in SOFT_DELETE_TABLES:
+        return jsonify({"error": "tabela inválida"}), 400
+    try:
+        # Só apaga se já estiver arquivado — barreira contra hard-delete de item ativo
+        atual = supabase.table(tabela).select("id, deleted_at").eq("id", row_id).limit(1).execute()
+        if not atual.data:
+            return jsonify({"error": "não encontrado"}), 404
+        if not atual.data[0].get("deleted_at"):
+            return jsonify({"error": "item não está na Lixeira"}), 400
+        supabase.table(tabela).delete().eq("id", row_id).execute()
+        audit("delete", tabela, row_id, "Exclusão definitiva da Lixeira")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
 # E-MAIL DA EMPRESA (IMAP/SMTP — caixa contato@nodedata.com.br)
 # ============================================================
 # Stdlib pura (imaplib/smtplib/email). Sem armazenar a caixa em massa: a INBOX
@@ -3291,7 +3394,7 @@ def _leads_by_email():
     if not supabase:
         return out
     try:
-        r = supabase.table("leads").select("id, nome, email").limit(1000).execute()
+        r = supabase.table("leads").select("id, nome, email").is_null("deleted_at").limit(1000).execute()
         for l in (r.data or []):
             em = (l.get("email") or "").strip().lower()
             if em:
