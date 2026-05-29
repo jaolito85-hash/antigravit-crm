@@ -1661,6 +1661,20 @@
                     </table>
                 </div>
             </div>
+
+            <div class="card" style="margin-top:20px">
+                <div class="card-header">
+                    <h3><i class="ri-database-2-line"></i> Backups</h3>
+                    <button class="btn btn-sm btn-primary" id="btn-backup-run" onclick="runBackupNow()"><i class="ri-save-3-line"></i> Fazer backup agora</button>
+                </div>
+                <div class="card-body">
+                    <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Snapshot diário automático (03h) de todas as tabelas, guardado em bucket privado. O Supabase Pro também mantém backup nativo diário do banco.</p>
+                    <table>
+                        <thead><tr><th>Arquivo</th><th>Data</th><th>Tamanho</th><th>Download</th></tr></thead>
+                        <tbody id="backups-body"><tr><td colspan="4" style="text-align:center;color:#555;padding:16px">Carregando...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <!-- ===== AUDIT (admin) ===== -->
@@ -4100,6 +4114,35 @@
             <button class="btn-icon" onclick="openResetPassword('${u.id}')" title="Redefinir senha"><i class="ri-key-2-line"></i></button>
         </td>
     </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:#555;padding:20px">Nenhum usuário</td></tr>';
+            loadBackups();
+        }
+
+        async function loadBackups() {
+            const body = document.getElementById('backups-body');
+            if (!body) return;
+            const data = await api('/api/backup/list');
+            if (!Array.isArray(data) || !data.length) {
+                body.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#555;padding:16px">Nenhum backup ainda — o automático roda às 03h, ou clique em "Fazer backup agora".</td></tr>';
+                return;
+            }
+            const tam = n => !n ? '—' : (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+            body.innerHTML = data.map(b => `<tr>
+        <td style="font-family:monospace;font-size:12px">${escapeHTML(b.name)}</td>
+        <td style="font-size:12px;color:var(--text2)">${b.created_at ? fmtDateTime(b.created_at) : '—'}</td>
+        <td style="font-size:12px">${tam(b.size)}</td>
+        <td><a class="btn btn-sm btn-ghost" href="/api/backup/file/${encodeURIComponent(b.name)}" target="_blank" rel="noopener"><i class="ri-download-2-line"></i> Baixar</a></td>
+    </tr>`).join('');
+        }
+
+        async function runBackupNow() {
+            const btn = document.getElementById('btn-backup-run');
+            btn.disabled = true; btn.innerHTML = '<i class="ri-loader-4-line"></i> Gerando...';
+            try {
+                const r = await api('/api/backup/run', { method: 'POST' });
+                if (r.ok) { alert('Backup gerado: ' + r.path); loadBackups(); }
+                else alert('Falha no backup: ' + (r.error || 'erro'));
+            } catch (e) { alert('Erro: ' + e.message); }
+            btn.disabled = false; btn.innerHTML = '<i class="ri-save-3-line"></i> Fazer backup agora';
         }
 
         // Admin: editar nome/cargo/status do usuário.

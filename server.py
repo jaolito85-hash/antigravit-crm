@@ -3313,6 +3313,186 @@ def start_task_reminder():
 
 
 # ============================================================
+# BACKUP AUTOMÁTICO — snapshot diário em JSON p/ o bucket privado "backups"
+# ============================================================
+# Camada extra de segurança além do backup nativo do Supabase Pro (diário, gerenciado).
+# Gera uma cópia lógica baixável pelos sócios. AO CRIAR TABELA NOVA, adicione aqui.
+BACKUP_BUCKET = "backups"
+BACKUP_RETENTION = int(os.getenv("BACKUP_RETENTION", "14"))  # nº de snapshots mantidos
+BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "3"))             # hora BR do backup diário
+BACKUP_TABLES = [
+    "leads", "tarefas", "contratos", "documentos", "despesas", "receitas",
+    "emprestimos", "contas_bancarias", "categorias_financeiras", "fornecedores",
+    "contatos", "historico_acoes", "metas", "verticais", "crm_users", "anexos",
+    "entidades", "mensagens_socios", "audit_log", "health_logs", "deploy_health",
+    "onboarding_steps", "templates_email", "governo_dados", "supermercados_dados",
+    "escolas_dados", "eventos_dados", "condominios_dados", "franquias_dados",
+    "hoteis_dados", "saude_dados", "varejo_dados",
+]
+
+
+def _backup_headers(extra=None):
+    h = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    if extra:
+        h.update(extra)
+    return h
+
+
+def _fetch_all_rows(table, page=1000):
+    """Lê TODAS as linhas de uma tabela via PostgREST, paginando por Range
+    (o PostgREST limita a resposta; sem paginar o backup ficaria truncado)."""
+    rows, start = [], 0
+    while True:
+        resp = requests.get(
+            f"{SUPABASE_URL}/rest/v1/{table}?select=*",
+            headers=_backup_headers({"Range-Unit": "items", "Range": f"{start}-{start + page - 1}"}),
+            timeout=30,
+        )
+        if resp.status_code not in (200, 206):
+            raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:120]}")
+        batch = resp.json()
+        rows.extend(batch)
+        if len(batch) < page:
+            return rows
+        start += page
+
+
+def _prune_backups():
+    """Mantém só os últimos BACKUP_RETENTION snapshots no bucket."""
+    try:
+        resp = requests.post(
+            f"{SUPABASE_URL}/storage/v1/object/list/{BACKUP_BUCKET}",
+            headers=_backup_headers({"Content-Type": "application/json"}),
+            json={"prefix": "", "limit": 1000, "sortBy": {"column": "name", "order": "asc"}},
+            timeout=30,
+        )
+        if resp.status_code >= 400:
+            return
+        nomes = sorted(o["name"] for o in (resp.json() or []) if o.get("name", "").startswith("backup_"))
+        excedentes = nomes[:-BACKUP_RETENTION] if len(nomes) > BACKUP_RETENTION else []
+        if excedentes:
+            requests.delete(
+                f"{SUPABASE_URL}/storage/v1/object/{BACKUP_BUCKET}",
+                headers=_backup_headers({"Content-Type": "application/json"}),
+                json={"prefixes": excedentes}, timeout=30,
+            )
+            print(f"💾 [BACKUP] removidos {len(excedentes)} backups antigos")
+    except Exception as e:
+        print(f"💾 [BACKUP] prune erro: {e}")
+
+
+def run_backup():
+    """Gera o snapshot JSON de todas as tabelas e sobe no bucket privado."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return {"ok": False, "error": "Supabase não configurado"}
+    meta = {}
+    dados = {}
+    for t in BACKUP_TABLES:
+        try:
+            linhas = _fetch_all_rows(t)
+            dados[t] = linhas
+            meta[t] = len(linhas)
+        except Exception as e:
+            meta[t] = f"erro: {e}"
+            print(f"💾 [BACKUP] erro lendo {t}: {e}")
+    snapshot = {"_meta": {"gerado_em": datetime.now(BR_TZ).isoformat(), "tabelas": meta}, "dados": dados}
+    payload = json.dumps(snapshot, ensure_ascii=False, default=str).encode("utf-8")
+
+    ts = datetime.now(BR_TZ).strftime("%Y%m%d_%H%M%S")
+    path = f"backup_{ts}.json"
+    up = requests.post(
+        f"{SUPABASE_URL}/storage/v1/object/{BACKUP_BUCKET}/{path}",
+        headers=_backup_headers({"Content-Type": "application/json"}),
+        data=payload, timeout=90,
+    )
+    if up.status_code >= 400:
+        return {"ok": False, "error": up.text[:200]}
+    _prune_backups()
+    print(f"💾 [BACKUP] snapshot salvo: {path} ({len(payload)} bytes)")
+    return {"ok": True, "path": path, "bytes": len(payload), "tabelas": meta}
+
+
+def _backup_loop():
+    """Roda o backup uma vez por dia na hora configurada (fuso BR)."""
+    import time as _time
+    while True:
+        try:
+            _time.sleep(_segundos_ate(BACKUP_HOUR, 0))
+            run_backup()
+            _time.sleep(60)  # passa do minuto alvo
+        except Exception as e:
+            print(f"💾 [BACKUP] loop erro: {e}")
+            _time.sleep(3600)
+
+
+def start_backup_job():
+    """Inicia a thread de backup diário. Desliga sozinho se o Supabase não estiver configurado."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("💾 [BACKUP] Supabase não configurado — backup desligado")
+        return
+    threading.Thread(target=_backup_loop, daemon=True, name="backup").start()
+    print(f"💾 [BACKUP] Thread de backup diário iniciada ({BACKUP_HOUR}h BR, mantém {BACKUP_RETENTION})")
+
+
+@app.route("/api/backup/run", methods=["POST"])
+@login_required
+@admin_required
+def api_backup_run():
+    """Dispara um backup manual agora (admin)."""
+    res = run_backup()
+    audit("backup", "backups", None, f"Backup manual: {res.get('path', 'falhou')}")
+    return jsonify(res), (200 if res.get("ok") else 500)
+
+
+@app.route("/api/backup/list")
+@login_required
+@admin_required
+def api_backup_list():
+    """Lista os snapshots existentes no bucket (mais recente primeiro)."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify([])
+    try:
+        resp = requests.post(
+            f"{SUPABASE_URL}/storage/v1/object/list/{BACKUP_BUCKET}",
+            headers=_backup_headers({"Content-Type": "application/json"}),
+            json={"prefix": "", "limit": 1000, "sortBy": {"column": "name", "order": "desc"}},
+            timeout=30,
+        )
+        if resp.status_code >= 400:
+            return jsonify({"error": resp.text[:150]}), 500
+        itens = [
+            {"name": o["name"], "size": (o.get("metadata") or {}).get("size"), "created_at": o.get("created_at")}
+            for o in (resp.json() or []) if o.get("name", "").startswith("backup_")
+        ]
+        return jsonify(itens)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/backup/file/<path:filename>")
+@login_required
+@admin_required
+def api_backup_file(filename):
+    """URL assinada (10 min) para download do snapshot — admin only."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"error": "Storage não configurado"}), 503
+    try:
+        resp = requests.post(
+            f"{SUPABASE_URL}/storage/v1/object/sign/{BACKUP_BUCKET}/{filename}",
+            headers=_backup_headers({"Content-Type": "application/json"}),
+            json={"expiresIn": 600}, timeout=15,
+        )
+        if resp.status_code >= 400:
+            return jsonify({"error": "Backup não encontrado"}), 404
+        signed = resp.json().get("signedURL") or resp.json().get("signedUrl")
+        if not signed:
+            return jsonify({"error": "Falha ao assinar URL"}), 500
+        return redirect(f"{SUPABASE_URL}/storage/v1{signed}")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
 # LIXEIRA — soft-delete reversível (admin)
 # ============================================================
 # Tabelas com soft-delete e qual coluna usar como título do item na Lixeira.
@@ -3774,6 +3954,7 @@ if __name__ == "__main__":
     ensure_admin_exists()
     start_health_monitor()
     start_task_reminder()
+    start_backup_job()
     port = int(os.getenv("PORT", 5010))
     print(f"🚀 CRM Node Data running on port {port}")
     if supabase:
