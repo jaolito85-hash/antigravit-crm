@@ -57,6 +57,14 @@ except ImportError:
     limiter = None
     print("⚠️ flask-limiter not installed, running without rate limiting")
 
+
+def login_limit(f):
+    """Rate limit estrito só no POST do login (anti força-bruta). No-op se o
+    limiter não estiver disponível, pra não quebrar o boot."""
+    if not limiter:
+        return f
+    return limiter.limit("10 per minute", methods=["POST"])(f)
+
 # --- Supabase REST Client (no SDK needed) ---
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
@@ -273,6 +281,7 @@ def _soft_delete(table, row_id):
 # ============================================================
 
 @app.route("/login", methods=["GET", "POST"])
+@login_limit
 def login_page():
     error = None
     if request.method == "POST":
@@ -287,11 +296,15 @@ def login_page():
             error = "Sistema indisponível. Tente novamente."
             return render_template("login.html", error=error)
 
+        # Mensagem única pra não revelar se o usuário existe (anti-enumeração).
+        generic_err = "Usuário ou senha inválidos."
         try:
             result = supabase.table("crm_users").select("*").eq("username", username).eq("active", True).execute()
             if result.data and len(result.data) == 1:
                 user = result.data[0]
                 if check_password_hash(user["password_hash"], password):
+                    # Rotação de sessão: descarta qualquer sessão anterior antes de autenticar.
+                    session.clear()
                     session.permanent = True
                     session["user_id"] = user["id"]
                     session["username"] = user["username"]
@@ -307,10 +320,11 @@ def login_page():
                     audit("login", details=f"Login bem-sucedido: {username}")
                     return redirect(url_for("index"))
                 else:
-                    error = "Senha incorreta."
+                    error = generic_err
                     audit("login", details=f"Senha incorreta para: {username}")
             else:
-                error = "Usuário não encontrado."
+                error = generic_err
+                audit("login", details=f"Tentativa com usuário inexistente/inativo: {username}")
         except Exception as e:
             print(f"Login error: {e}")
             error = "Erro ao conectar. Tente novamente."
@@ -1355,6 +1369,92 @@ def api_create_user():
         result = supabase.table("crm_users").insert(data).execute()
         audit("create", "crm_users", details=f"Novo usuário: {data.get('username')}")
         return jsonify({"ok": True, "id": result.data[0]["id"] if result.data else None}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/users/<user_id>", methods=["PATCH"])
+@login_required
+@admin_required
+def api_update_user(user_id):
+    """Edita usuário (nome, cargo, ativo) e, opcionalmente, redefine a senha.
+    Só admin. Protege contra auto-bloqueio e contra ficar sem nenhum admin ativo.
+    Nunca aceita password_hash cru do cliente — sempre re-hasheia."""
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    data = request.json or {}
+
+    # Whitelist de campos — impede o cliente de escrever colunas sensíveis direto.
+    updates = {}
+    for campo in ("display_name", "role", "active"):
+        if campo in data:
+            updates[campo] = data[campo]
+
+    new_password = data.get("password")
+    if new_password:
+        if len(new_password) < 6:
+            return jsonify({"error": "Senha deve ter pelo menos 6 caracteres"}), 400
+        updates["password_hash"] = generate_password_hash(new_password)
+
+    if not updates:
+        return jsonify({"error": "Nada para atualizar"}), 400
+
+    # Proteção: não deixar o admin travar o próprio acesso.
+    if str(user_id) == str(session.get("user_id")):
+        if updates.get("active") is False:
+            return jsonify({"error": "Você não pode desativar a si mesmo"}), 400
+        if "role" in updates and updates["role"] != "admin":
+            return jsonify({"error": "Você não pode rebaixar a si mesmo"}), 400
+
+    # Proteção: nunca remover o único admin ativo do sistema.
+    desativando = updates.get("active") is False
+    rebaixando = "role" in updates and updates["role"] != "admin"
+    if desativando or rebaixando:
+        try:
+            admins = supabase.table("crm_users").select("id").eq("role", "admin").eq("active", True).execute()
+            admin_ids = {str(a["id"]) for a in (admins.data or [])}
+            if str(user_id) in admin_ids and len(admin_ids) <= 1:
+                return jsonify({"error": "Não é possível remover o único admin ativo"}), 400
+        except Exception as e:
+            print(f"update_user admin-check error: {e}")
+
+    try:
+        supabase.table("crm_users").update(updates).eq("id", user_id).execute()
+        campos = [c for c in updates if c != "password_hash"]
+        if "password_hash" in updates:
+            campos.append("senha")
+        audit("update", "crm_users", user_id, f"Editou usuário: {', '.join(campos)}")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/me/password", methods=["POST"])
+@login_required
+def api_change_my_password():
+    """Troca a própria senha. Exige a senha atual — qualquer usuário logado
+    (inclusive viewer) pode trocar a sua."""
+    if not supabase:
+        return jsonify({"error": "DB offline"}), 503
+    data = request.json or {}
+    current = data.get("current_password", "")
+    nova = data.get("new_password", "")
+    if len(nova) < 6:
+        return jsonify({"error": "Nova senha deve ter pelo menos 6 caracteres"}), 400
+
+    uid = session.get("user_id")
+    try:
+        r = supabase.table("crm_users").select("password_hash").eq("id", uid).execute()
+        if not r.data:
+            return jsonify({"error": "Usuário não encontrado"}), 404
+        if not check_password_hash(r.data[0]["password_hash"], current):
+            audit("update", "crm_users", uid, "Troca de senha negada (senha atual incorreta)")
+            return jsonify({"error": "Senha atual incorreta"}), 403
+        supabase.table("crm_users").update({
+            "password_hash": generate_password_hash(nova)
+        }).eq("id", uid).execute()
+        audit("update", "crm_users", uid, "Trocou a própria senha")
+        return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

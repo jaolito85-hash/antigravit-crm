@@ -1149,6 +1149,8 @@
                     <div class="user-role">{{ role }}</div>
                 </div>
             </div>
+            <button class="btn-logout" onclick="openMyPassword()" style="margin-bottom:8px"><i class="ri-lock-password-line"></i>
+                Minha senha</button>
             <button class="btn-logout" onclick="location.href='/logout'"><i class="ri-logout-box-r-line"></i>
                 Sair</button>
         </div>
@@ -1652,6 +1654,7 @@
                                 <th>Cargo</th>
                                 <th>Último Login</th>
                                 <th>Status</th>
+                                <th>Ações</th>
                             </tr>
                         </thead>
                         <tbody id="users-body"></tbody>
@@ -4071,15 +4074,73 @@
             btn.disabled = false; btn.innerHTML = '<i class="ri-notification-line"></i> Testar Alerta';
         }
 
+        let usersCache = [];
         async function loadUsers() {
             const data = await api('/api/users');
-            document.getElementById('users-body').innerHTML = data.map(u => `<tr>
-        <td><strong>${u.username}</strong></td>
-        <td>${u.display_name}</td>
+            usersCache = Array.isArray(data) ? data : [];
+            document.getElementById('users-body').innerHTML = usersCache.map(u => `<tr>
+        <td><strong>${escapeHTML(u.username)}</strong></td>
+        <td>${escapeHTML(u.display_name || '')}</td>
         <td><span class="badge badge-purple">${u.role}</span></td>
         <td>${fmtDateTime(u.last_login_at)}</td>
         <td>${u.active ? '<span class="badge badge-green">Ativo</span>' : '<span class="badge badge-red">Inativo</span>'}</td>
-    </tr>`).join('');
+        <td class="actions">
+            <button class="btn-icon" onclick="openEditUser('${u.id}')" title="Editar"><i class="ri-edit-line"></i></button>
+            <button class="btn-icon" onclick="openResetPassword('${u.id}')" title="Redefinir senha"><i class="ri-key-2-line"></i></button>
+        </td>
+    </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:#555;padding:20px">Nenhum usuário</td></tr>';
+        }
+
+        // Admin: editar nome/cargo/status do usuário.
+        function openEditUser(id) {
+            const u = usersCache.find(x => x.id === id);
+            if (!u) return;
+            document.getElementById('modal-content').innerHTML = `<h3>Editar Usuário</h3><form onsubmit="saveEditUser(event,'${u.id}')">
+    <div class="form-row"><div class="form-group"><label>Usuário</label><input value="${escA(u.username)}" disabled></div><div class="form-group"><label>Nome</label><input name="display_name" required value="${escA(u.display_name)}"></div></div>
+    <div class="form-row"><div class="form-group"><label>Cargo</label><select name="role"><option value="admin"${u.role === 'admin' ? ' selected' : ''}>Admin</option><option value="editor"${u.role === 'editor' ? ' selected' : ''}>Editor</option><option value="viewer"${u.role === 'viewer' ? ' selected' : ''}>Viewer</option></select></div><div class="form-group"><label>Status</label><select name="active"><option value="true"${u.active !== false ? ' selected' : ''}>Ativo</option><option value="false"${u.active === false ? ' selected' : ''}>Inativo</option></select></div></div>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div></form>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+        async function saveEditUser(e, id) {
+            e.preventDefault();
+            const f = e.target;
+            const r = await api('/api/users/' + id, { method: 'PATCH', body: { display_name: f.display_name.value, role: f.role.value, active: f.active.value === 'true' } });
+            if (r.error) { alert(r.error); return; }
+            closeModal(); loadUsers();
+        }
+
+        // Admin: redefinir a senha de outro usuário.
+        function openResetPassword(id) {
+            const u = usersCache.find(x => x.id === id);
+            if (!u) return;
+            document.getElementById('modal-content').innerHTML = `<h3>Redefinir senha — ${escapeHTML(u.display_name || u.username)}</h3><form onsubmit="saveResetPassword(event,'${u.id}')">
+    <div class="form-group"><label>Nova senha</label><input name="password" type="password" required minlength="6" autocomplete="new-password"></div>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Redefinir</button></div></form>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+        async function saveResetPassword(e, id) {
+            e.preventDefault();
+            const r = await api('/api/users/' + id, { method: 'PATCH', body: { password: e.target.password.value } });
+            if (r.error) { alert(r.error); return; }
+            closeModal(); alert('Senha redefinida.');
+        }
+
+        // Self-service: qualquer usuário troca a própria senha (exige a atual).
+        function openMyPassword() {
+            document.getElementById('modal-content').innerHTML = `<h3>Trocar minha senha</h3><form onsubmit="saveMyPassword(event)">
+    <div class="form-group"><label>Senha atual</label><input name="atual" type="password" required autocomplete="current-password"></div>
+    <div class="form-group"><label>Nova senha</label><input name="nova" type="password" required minlength="6" autocomplete="new-password"></div>
+    <div class="form-group"><label>Confirmar nova senha</label><input name="conf" type="password" required minlength="6" autocomplete="new-password"></div>
+    <div class="form-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Trocar</button></div></form>`;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+        async function saveMyPassword(e) {
+            e.preventDefault();
+            const f = e.target;
+            if (f.nova.value !== f.conf.value) { alert('A confirmação não confere com a nova senha.'); return; }
+            const r = await api('/api/me/password', { method: 'POST', body: { current_password: f.atual.value, new_password: f.nova.value } });
+            if (r.error) { alert(r.error); return; }
+            closeModal(); alert('Senha alterada com sucesso.');
         }
 
         async function loadAudit() {
