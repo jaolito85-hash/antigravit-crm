@@ -887,6 +887,45 @@
         .raw-debug { font-size: 11px; color: var(--text2); margin-top: 8px }
         .raw-debug pre { background: #0a0a0f; border: 1px solid var(--border); border-radius: 6px; padding: 8px; overflow-x: auto; max-height: 200px; margin-top: 4px; font-family: 'SF Mono', Monaco, monospace }
 
+        /* CONTAS BANCÁRIAS — cards + extrato */
+        .acc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 16px }
+        .acc-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; cursor: pointer; transition: border-color .15s, transform .15s, box-shadow .15s; position: relative }
+        .acc-card:hover { border-color: var(--border2); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.35) }
+        .acc-card:active { transform: translateY(0) }
+        .acc-card .acc-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px }
+        .acc-card .acc-name { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 8px }
+        .acc-card .acc-name .acc-ico { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--primary-glow); color: var(--primary); font-size: 15px; flex: none }
+        .acc-card .acc-meta { font-size: 11px; color: var(--text2); margin-top: 2px }
+        .acc-card .acc-saldo { font-size: 28px; font-weight: 700; letter-spacing: -.5px; margin-top: 14px; font-variant-numeric: tabular-nums }
+        .acc-card .acc-flow { display: flex; gap: 16px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px }
+        .acc-card .acc-flow .fl-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); display: block; margin-bottom: 2px }
+        .acc-card .acc-flow .fl-val { font-weight: 600; font-variant-numeric: tabular-nums }
+        .acc-card .acc-hint { position: absolute; right: 16px; bottom: 16px; font-size: 11px; color: var(--primary); opacity: 0; transition: opacity .15s; display: flex; align-items: center; gap: 4px }
+        .acc-card:hover .acc-hint { opacity: 1 }
+        .acc-card .acc-actions { display: flex; gap: 4px }
+        /* Extrato (modal) */
+        .ext-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 18px 0 }
+        .ext-chip { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px }
+        .ext-chip .ec-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); margin-bottom: 6px }
+        .ext-chip .ec-val { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.3px }
+        .ext-filters { display: flex; gap: 6px; margin-bottom: 12px }
+        .ext-table { width: 100%; border-collapse: collapse; font-size: 13px }
+        .ext-table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface) }
+        .ext-table td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: middle }
+        .ext-table tbody tr:hover { background: var(--surface2) }
+        .ext-table .num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap }
+        .ext-table tr.previsto td { opacity: .58 }
+        .ext-dir { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap }
+        .ext-scroll { max-height: 52vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px }
+        .mov-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background .15s }
+        .mov-row:last-child { border-bottom: 0 }
+        .mov-row:hover { background: var(--surface2) }
+        .mov-row .mov-ico { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; flex: none; font-size: 15px }
+        .mov-row .mov-main { flex: 1; min-width: 0 }
+        .mov-row .mov-desc { font-weight: 500; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+        .mov-row .mov-sub { font-size: 11px; color: var(--text2); margin-top: 2px }
+        .mov-row .mov-val { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap }
+
         /* LEAD DETAIL 360 */
         .modal.xl { max-width: 1100px }
         .ld-header { padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 16px }
@@ -1523,11 +1562,15 @@
         <!-- ===== CONTAS BANCÁRIAS ===== -->
         <div class="view" id="view-contas">
             <div class="page-header">
-                <div><h1>Contas Bancárias</h1><p>Saldo = saldo inicial − despesas pagas pela conta</p></div>
+                <div><h1>Contas Bancárias</h1><p>Saldo = saldo inicial + recebimentos − pagamentos da conta</p></div>
                 <button class="btn btn-primary" onclick="openCadModal('conta')"><i class="ri-add-line"></i>Nova Conta</button>
             </div>
             <div class="stats-grid" id="contas-stats"></div>
-            <div id="contas-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin-top:16px"></div>
+            <div id="contas-grid" class="acc-grid"></div>
+            <div class="card" id="contas-mov-card" style="margin-top:20px;display:none">
+                <div class="card-header"><h3><i class="ri-exchange-line"></i> Últimas movimentações</h3><span style="font-size:12px;color:var(--text2)">todas as contas</span></div>
+                <div class="card-body" style="padding:0"><div id="contas-mov-list"></div></div>
+            </div>
         </div>
 
         <!-- ===== CATEGORIAS (PLANO DE CONTAS) ===== -->
@@ -3606,27 +3649,213 @@
         </div></td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:#555;padding:30px">Nenhum fornecedor cadastrado</td></tr>';
         }
 
+        // Caches de lançamentos p/ montar o extrato no cliente (sem endpoint novo).
+        let contasDespCache = [], contasRecCache = [];
+        let _extratoState = { contaId: null, filter: 'todos', entries: [] };
+
+        const EXT_DIR = {
+            in:  { lbl: 'Entrada', ico: 'ri-arrow-down-line', color: 'var(--green)' },
+            out: { lbl: 'Saída',   ico: 'ri-arrow-up-line',   color: 'var(--red)' },
+        };
+
+        // Formata moeda mostrando zero como R$ 0,00 (diferente de fmt(), que vira "—").
+        function fmtv(v) { return 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+        // Converte uma despesa/receita num lançamento de extrato (null se cancelada).
+        function extratoEntry(row, kind) {
+            if (row.status === 'cancelado') return null;
+            const dir = kind === 'receita' ? 'in' : 'out';
+            const realizado = kind === 'receita' ? row.status === 'recebido' : row.status === 'pago';
+            const st = kind === 'receita'
+                ? (RECEITA_STATUS[row.status] || RECEITA_STATUS.recebido)
+                : (DESPESA_STATUS[row.status] || DESPESA_STATUS.pago);
+            return {
+                id: row.id, kind, dir, realizado,
+                descricao: row.descricao || (kind === 'receita' ? 'Receita' : 'Despesa'),
+                categoria: row.categorias_financeiras || null,
+                contraparte: kind === 'receita' ? (row.leads?.nome || '') : (row.fornecedores?.nome || ''),
+                status: row.status, statusLabel: st.label, statusColor: st.color,
+                valor: parseFloat(row.valor || 0),
+                // Data do movimento (extrato): quando/onde o dinheiro entra ou sai, não a competência.
+                // Receita: data de recebimento → competência. Despesa: pagamento → vencimento → competência.
+                data: (kind === 'receita'
+                    ? (row.data_recebimento || row.data)
+                    : (row.data_pagamento || row.data_vencimento || row.data)) || null,
+                conta_id: row.conta_id || null,
+            };
+        }
+
         async function loadContas() {
-            const [contas, desp] = await Promise.all([api('/api/contas'), api('/api/despesas')]);
+            const [contas, desp, rec] = await Promise.all([api('/api/contas'), api('/api/despesas'), api('/api/receitas')]);
             cadData.conta = contas || [];
-            const gasto = {};
-            (desp || []).forEach(d => { if (d.conta_id && d.status === 'pago') gasto[d.conta_id] = (gasto[d.conta_id] || 0) + parseFloat(d.valor || 0); });
-            const saldoTotal = (contas || []).reduce((s, c) => s + (parseFloat(c.saldo_inicial || 0) - (gasto[c.id] || 0)), 0);
-            document.getElementById('contas-stats').innerHTML = `<div class="stat-card"><div class="stat-label">Saldo Consolidado</div><div class="stat-value ${saldoTotal >= 0 ? 'green' : 'red'}">${fmt(saldoTotal)}</div><div class="stat-sub">${(contas || []).filter(c => c.ativo !== false).length} contas ativas</div></div>`;
+            contasDespCache = desp || [];
+            contasRecCache = rec || [];
+
+            // Agrega entradas/saídas (realizadas e previstas) por conta.
+            const agg = {};
+            const bump = (id, k, v) => { if (!id) return; (agg[id] = agg[id] || { entradas: 0, saidas: 0, prevIn: 0, prevOut: 0 })[k] += v; };
+            (rec || []).forEach(r => { if (r.status === 'cancelado') return; const v = parseFloat(r.valor || 0); bump(r.conta_id, r.status === 'recebido' ? 'entradas' : 'prevIn', v); });
+            (desp || []).forEach(d => { if (d.status === 'cancelado') return; const v = parseFloat(d.valor || 0); bump(d.conta_id, d.status === 'pago' ? 'saidas' : 'prevOut', v); });
+
+            const saldoReal = c => parseFloat(c.saldo_inicial || 0) + (agg[c.id]?.entradas || 0) - (agg[c.id]?.saidas || 0);
+            const ativas = (contas || []).filter(c => c.ativo !== false);
+            const totalSaldo = ativas.reduce((s, c) => s + saldoReal(c), 0);
+            const totalIn = ativas.reduce((s, c) => s + (agg[c.id]?.entradas || 0), 0);
+            const totalOut = ativas.reduce((s, c) => s + (agg[c.id]?.saidas || 0), 0);
+
+            document.getElementById('contas-stats').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Saldo Consolidado</div><div class="stat-value ${totalSaldo >= 0 ? 'green' : 'red'}">${fmtv(totalSaldo)}</div><div class="stat-sub">${ativas.length} contas ativas</div></div>
+        <div class="stat-card"><div class="stat-label">Total de Entradas</div><div class="stat-value green">${fmtv(totalIn)}</div><div class="stat-sub">recebimentos confirmados</div></div>
+        <div class="stat-card"><div class="stat-label">Total de Saídas</div><div class="stat-value red">${fmtv(totalOut)}</div><div class="stat-sub">pagamentos confirmados</div></div>`;
+
             document.getElementById('contas-grid').innerHTML = (contas || []).map(c => {
-                const saldo = parseFloat(c.saldo_inicial || 0) - (gasto[c.id] || 0);
-                return `<div class="card" style="padding:16px;${c.ativo === false ? 'opacity:.5' : ''}">
-            <div style="display:flex;justify-content:space-between;align-items:start">
-                <div><div style="font-weight:600">${c.nome}</div><div style="font-size:11px;color:var(--text2)">${CONTA_TIPOS[c.tipo] || c.tipo}${c.banco ? ' · ' + c.banco : ''}</div></div>
-                <div class="actions">
+                const a = agg[c.id] || { entradas: 0, saidas: 0 };
+                const saldo = saldoReal(c);
+                const nm = (c.nome || '').replace(/'/g, '');
+                return `<div class="acc-card" onclick="openContaExtrato('${c.id}')" style="${c.ativo === false ? 'opacity:.55' : ''}">
+            <div class="acc-top">
+                <div>
+                    <div class="acc-name"><span class="acc-ico"><i class="ri-bank-line"></i></span>${c.nome}</div>
+                    <div class="acc-meta">${CONTA_TIPOS[c.tipo] || c.tipo}${c.banco ? ' · ' + c.banco : ''}${c.ativo === false ? ' · inativa' : ''}</div>
+                </div>
+                <div class="acc-actions" onclick="event.stopPropagation()">
                     <button class="btn-icon" onclick="editCad('conta','${c.id}')" title="Editar"><i class="ri-edit-line"></i></button>
-                    <button class="btn-icon danger" onclick="deleteCad('conta','${c.id}','${(c.nome || '').replace(/'/g, '')}')" title="Excluir"><i class="ri-delete-bin-line"></i></button>
+                    <button class="btn-icon danger" onclick="deleteCad('conta','${c.id}','${nm}')" title="Excluir"><i class="ri-delete-bin-line"></i></button>
                 </div>
             </div>
-            <div style="font-size:24px;font-weight:700;margin-top:12px;color:${saldo >= 0 ? 'var(--text)' : 'var(--red)'}">${fmt(saldo)}</div>
-            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-top:4px"><span>Inicial: ${fmt(c.saldo_inicial || 0)}</span><span>Gasto: ${fmt(gasto[c.id] || 0)}</span></div>
+            <div class="acc-saldo" style="color:${saldo >= 0 ? 'var(--text)' : 'var(--red)'}">${fmtv(saldo)}</div>
+            <div class="acc-flow">
+                <div><span class="fl-lbl">Entradas</span><span class="fl-val" style="color:var(--green)">${fmtv(a.entradas)}</span></div>
+                <div><span class="fl-lbl">Saídas</span><span class="fl-val" style="color:var(--red)">${fmtv(a.saidas)}</span></div>
+                <div><span class="fl-lbl">Inicial</span><span class="fl-val" style="color:var(--text2)">${fmtv(c.saldo_inicial || 0)}</span></div>
+            </div>
+            <div class="acc-hint">Ver extrato <i class="ri-arrow-right-line"></i></div>
         </div>`;
             }).join('') || '<p style="color:#555;padding:20px">Nenhuma conta cadastrada</p>';
+
+            renderContasMovimentacoes(contas || []);
+        }
+
+        // Lista consolidada das últimas movimentações de todas as contas.
+        function renderContasMovimentacoes(contas) {
+            const nameById = {};
+            (contas || []).forEach(c => { nameById[c.id] = c.nome; });
+            const entries = [];
+            contasRecCache.forEach(r => { const e = extratoEntry(r, 'receita'); if (e && e.conta_id) entries.push(e); });
+            contasDespCache.forEach(d => { const e = extratoEntry(d, 'despesa'); if (e && e.conta_id) entries.push(e); });
+            entries.sort((a, b) => (b.data || '').localeCompare(a.data || ''));
+            const recent = entries.slice(0, 10);
+            const card = document.getElementById('contas-mov-card');
+            if (!recent.length) { card.style.display = 'none'; return; }
+            card.style.display = '';
+            document.getElementById('contas-mov-list').innerHTML = recent.map(e => {
+                const dir = EXT_DIR[e.dir];
+                const sign = e.dir === 'in' ? '+' : '−';
+                return `<div class="mov-row" onclick="openContaExtrato('${e.conta_id}')">
+            <div class="mov-ico" style="background:${dir.color}1f;color:${dir.color}"><i class="${dir.ico}"></i></div>
+            <div class="mov-main">
+                <div class="mov-desc">${escapeHTML(e.descricao)}</div>
+                <div class="mov-sub">${escapeHTML(nameById[e.conta_id] || '—')} · ${fmtDate(e.data)}${e.realizado ? '' : ' · ' + e.statusLabel}</div>
+            </div>
+            <div class="mov-val" style="color:${dir.color}">${sign} ${fmtv(e.valor)}</div>
+        </div>`;
+            }).join('');
+        }
+
+        // Modal de extrato bancário da conta.
+        function openContaExtrato(contaId) {
+            const c = (cadData.conta || []).find(x => x.id === contaId);
+            if (!c) return;
+
+            const entries = [];
+            contasRecCache.forEach(r => { if (r.conta_id === contaId) { const e = extratoEntry(r, 'receita'); if (e) entries.push(e); } });
+            contasDespCache.forEach(d => { if (d.conta_id === contaId) { const e = extratoEntry(d, 'despesa'); if (e) entries.push(e); } });
+
+            const inicial = parseFloat(c.saldo_inicial || 0);
+            const entradas = entries.filter(e => e.realizado && e.dir === 'in').reduce((s, e) => s + e.valor, 0);
+            const saidas = entries.filter(e => e.realizado && e.dir === 'out').reduce((s, e) => s + e.valor, 0);
+            const prevIn = entries.filter(e => !e.realizado && e.dir === 'in').reduce((s, e) => s + e.valor, 0);
+            const prevOut = entries.filter(e => !e.realizado && e.dir === 'out').reduce((s, e) => s + e.valor, 0);
+            const saldoReal = inicial + entradas - saidas;
+            const saldoProj = saldoReal + prevIn - prevOut;
+            const temPrevisto = entries.some(e => !e.realizado);
+
+            // Saldo acumulado calculado sobre os realizados em ordem cronológica.
+            const reals = entries.filter(e => e.realizado).slice().sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+            let acc = inicial;
+            reals.forEach(e => { acc += e.dir === 'in' ? e.valor : -e.valor; e._acc = acc; });
+
+            _extratoState = { contaId, filter: 'todos', entries };
+
+            const mc = document.getElementById('modal-content');
+            mc.classList.add('xl');
+            mc.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:4px">
+            <div>
+                <h3 style="margin-bottom:6px;display:flex;align-items:center;gap:10px">
+                    <span style="width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:var(--primary-glow);color:var(--primary)"><i class="ri-bank-line"></i></span>
+                    ${c.nome}
+                </h3>
+                <span style="font-size:12px;color:var(--text2)">${CONTA_TIPOS[c.tipo] || c.tipo}${c.banco ? ' · ' + c.banco : ''}${c.agencia ? ' · Ag. ' + c.agencia : ''}${c.conta ? ' · C/ ' + c.conta : ''}</span>
+            </div>
+            <button class="btn btn-sm btn-ghost" onclick="closeModal()">Fechar</button>
+        </div>
+        <div class="ext-summary">
+            <div class="ext-chip"><div class="ec-lbl">Saldo inicial</div><div class="ec-val">${fmtv(inicial)}</div></div>
+            <div class="ext-chip"><div class="ec-lbl">Entradas</div><div class="ec-val" style="color:var(--green)">${fmtv(entradas)}</div></div>
+            <div class="ext-chip"><div class="ec-lbl">Saídas</div><div class="ec-val" style="color:var(--red)">${fmtv(saidas)}</div></div>
+            <div class="ext-chip" style="border-color:${saldoReal >= 0 ? 'rgba(16,185,129,.4)' : 'rgba(239,68,68,.4)'}"><div class="ec-lbl">Saldo realizado</div><div class="ec-val" style="color:${saldoReal >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtv(saldoReal)}</div></div>
+            ${temPrevisto ? `<div class="ext-chip"><div class="ec-lbl">Saldo projetado</div><div class="ec-val" style="color:var(--text2)">${fmtv(saldoProj)}</div></div>` : ''}
+        </div>
+        <div class="ext-filters">
+            <button class="tab active" onclick="setExtratoFilter('todos',this)">Todos</button>
+            <button class="tab" onclick="setExtratoFilter('realizado',this)">Realizados</button>
+            <button class="tab" onclick="setExtratoFilter('previsto',this)">Previstos</button>
+        </div>
+        <div class="ext-scroll"><table class="ext-table">
+            <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Tipo</th><th>Status</th><th class="num">Valor</th><th class="num">Saldo</th></tr></thead>
+            <tbody id="ext-tbody"></tbody>
+        </table></div>
+        <p style="font-size:11px;color:var(--text2);margin-top:10px"><i class="ri-information-line"></i> O saldo acumulado considera apenas lançamentos realizados (pagos/recebidos). Os previstos entram só no saldo projetado.</p>`;
+
+            renderExtratoTable();
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function setExtratoFilter(f, btn) {
+            _extratoState.filter = f;
+            document.querySelectorAll('.ext-filters .tab').forEach(t => t.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+            renderExtratoTable();
+        }
+
+        function renderExtratoTable() {
+            const { entries, filter } = _extratoState;
+            let rows = entries.slice();
+            if (filter === 'realizado') rows = rows.filter(e => e.realizado);
+            else if (filter === 'previsto') rows = rows.filter(e => !e.realizado);
+            // Mais recente no topo; empata com realizados antes de previstos.
+            rows.sort((a, b) => (b.data || '').localeCompare(a.data || '') || (a.realizado === b.realizado ? 0 : (a.realizado ? -1 : 1)));
+            const tb = document.getElementById('ext-tbody');
+            if (!rows.length) {
+                const lbl = filter === 'previsto' ? 'previsto' : filter === 'realizado' ? 'realizado' : '';
+                tb.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#555;padding:30px">Nenhum lançamento ${lbl} nesta conta</td></tr>`;
+                return;
+            }
+            tb.innerHTML = rows.map(e => {
+                const dir = EXT_DIR[e.dir];
+                const sign = e.dir === 'in' ? '+' : '−';
+                const cat = e.categoria ? `<span style="color:${e.categoria.cor || '#888'}">${e.categoria.icone || ''} ${escapeHTML(e.categoria.nome)}</span>` : '—';
+                return `<tr class="${e.realizado ? '' : 'previsto'}">
+            <td style="white-space:nowrap;color:var(--text2)">${fmtDate(e.data)}</td>
+            <td><strong>${escapeHTML(e.descricao)}</strong>${e.contraparte ? `<div style="font-size:11px;color:var(--text2)">${escapeHTML(e.contraparte)}</div>` : ''}</td>
+            <td>${cat}</td>
+            <td><span class="ext-dir" style="color:${dir.color}"><i class="${dir.ico}"></i> ${dir.lbl}</span></td>
+            <td><span class="badge" style="background:${e.statusColor}22;color:${e.statusColor}">${e.statusLabel}</span></td>
+            <td class="num" style="color:${dir.color}">${sign} ${fmtv(e.valor)}</td>
+            <td class="num" style="color:var(--text2)">${e.realizado ? fmtv(e._acc) : '—'}</td>
+        </tr>`;
+            }).join('');
         }
 
         async function loadCategorias() {
