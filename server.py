@@ -1897,6 +1897,34 @@ def send_whatsapp_text(number, text):
         return False
 
 
+def send_whatsapp_media(number, conteudo, filename, caption="", mimetype="application/pdf"):
+    """Envia um documento (ex: PDF) pela instância Evolution do bot de demo.
+    `conteudo` = bytes do arquivo."""
+    import base64
+    if not all([DEMO_EVOLUTION_URL, DEMO_EVOLUTION_KEY, DEMO_EVOLUTION_INSTANCE]):
+        print("[DEMO] Evolution (demo) não configurada; documento não enviado.")
+        return False
+    url = f"{DEMO_EVOLUTION_URL}/message/sendMedia/{DEMO_EVOLUTION_INSTANCE}"
+    headers = {"apikey": DEMO_EVOLUTION_KEY, "Content-Type": "application/json"}
+    payload = {
+        "number": number,
+        "mediatype": "document",
+        "mimetype": mimetype,
+        "media": base64.b64encode(conteudo).decode("ascii"),
+        "fileName": filename,
+        "caption": caption,
+    }
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=30)
+        ok = resp.status_code in (200, 201)
+        if not ok:
+            print(f"[DEMO] sendMedia falhou {resp.status_code}: {resp.text[:200]}")
+        return ok
+    except Exception as e:
+        print(f"[DEMO] envio de mídia erro: {e}")
+        return False
+
+
 def _extrair_texto_evolution(data):
     """Extrai o texto de uma mensagem no formato Evolution (Baileys)."""
     msg = (data or {}).get("message") or {}
@@ -1911,11 +1939,105 @@ def _extrair_texto_evolution(data):
 def _processar_demo(numero, texto, remetente):
     """Roda o agente e envia a resposta (em thread, fora do ciclo do webhook)."""
     try:
-        resposta = agente_demo_crm.responder(texto, remetente=remetente)
+        resposta = agente_demo_crm.responder(texto, remetente=remetente, numero=numero)
         send_whatsapp_text(numero, resposta)
         print(f"[DEMO] respondido {_mascara_id(numero)}: {resposta[:80]}")
     except Exception as e:
         print(f"[DEMO] processamento erro: {e}")
+
+
+# Liga o envio de documento (PDF) do agente à Evolution (só se o agente carregou).
+if agente_demo_crm:
+    agente_demo_crm.enviar_documento = send_whatsapp_media
+
+
+# ============================================================
+# MARCOS PROATIVO — resumo diário automático + avisos por evento (background).
+# Só liga se DEMO_DIGEST_PHONE estiver setado (o número que recebe).
+# ============================================================
+DEMO_DIGEST_PHONE = os.getenv("DEMO_DIGEST_PHONE", "")
+DEMO_DIGEST_HOUR = int(os.getenv("DEMO_DIGEST_HOUR", "8"))
+_demo_ultimo_digest = {"dia": None}
+_demo_alertas_enviados = set()
+
+
+def _demo_resumo_diario():
+    """Texto do resumo diário proativo (Bom dia + tarefas de hoje + números-chave)."""
+    if not agente_demo_crm:
+        return None
+    m = agente_demo_crm.metricas_negocio({}, "")
+    hoje = agente_demo_crm.listar_tarefas({"filtro": "hoje"}, "")
+    atrasadas = agente_demo_crm.listar_tarefas({"filtro": "atrasadas"}, "")
+    linhas = ["☀️ *Bom dia! Aqui é o Marcos, seu assistente.*", ""]
+    th = hoje.get("tarefas") or []
+    if th:
+        linhas.append(f"*Hoje você tem {len(th)} tarefa(s):*")
+        for t in th[:6]:
+            cli = f" — {t.get('cliente')}" if t.get("cliente") else ""
+            linhas.append(f"• {t.get('titulo')}{cli}")
+    else:
+        linhas.append("Nenhuma tarefa marcada pra hoje. 🎉")
+    ta = atrasadas.get("total") or 0
+    if ta:
+        linhas.append(f"\n⚠️ *{ta} tarefa(s) atrasada(s)* — quer que eu liste?")
+    linhas.append(f"\n💰 Faturamento do mês: *{m.get('faturamento_mes')}* · Lucro: *{m.get('lucro_mes')}*")
+    venc = (m.get("alertas") or {}).get("contratos_vencendo_30d") or []
+    if venc:
+        linhas.append(f"📄 *{len(venc)} contrato(s)* vencendo nos próximos 30 dias.")
+    linhas.append("\nQuer o relatório completo em *PDF*? É só pedir. 😉")
+    return "\n".join(linhas)
+
+
+def _demo_checar_alertas():
+    """Detecta eventos urgentes -> lista de (chave_dedupe, texto)."""
+    if not agente_demo_crm:
+        return []
+    m = agente_demo_crm.metricas_negocio({}, "")
+    out = []
+    for c in (m.get("alertas") or {}).get("contratos_vencendo_30d") or []:
+        out.append((
+            f"contrato:{c.get('cliente')}:{c.get('vence')}",
+            f"📄 *Atenção:* o contrato de *{c.get('cliente')}* vence em {c.get('vence')}. "
+            "Quer que eu crie um follow-up de renovação?",
+        ))
+    ta = (m.get("alertas") or {}).get("tarefas_atrasadas") or 0
+    if ta:
+        out.append((f"atrasadas:{ta}", f"⚠️ Você tem *{ta} tarefa(s) atrasada(s)*. Quer que eu liste?"))
+    return out
+
+
+def _marcos_proativo_loop():
+    import time as _t
+    while True:
+        try:
+            agora = datetime.now(BR_TZ)
+            # 1) Resumo diário (uma vez por dia, na hora configurada)
+            if DEMO_DIGEST_PHONE and agora.hour == DEMO_DIGEST_HOUR:
+                dia = agora.strftime("%Y-%m-%d")
+                if _demo_ultimo_digest["dia"] != dia:
+                    txt = _demo_resumo_diario()
+                    if txt and send_whatsapp_text(DEMO_DIGEST_PHONE, txt):
+                        _demo_ultimo_digest["dia"] = dia
+                        print("[DEMO] resumo diário enviado")
+            # 2) Avisos por evento (dedupe, não repete o mesmo alerta)
+            if DEMO_DIGEST_PHONE:
+                for chave, texto in _demo_checar_alertas():
+                    if chave not in _demo_alertas_enviados:
+                        if send_whatsapp_text(DEMO_DIGEST_PHONE, texto):
+                            _demo_alertas_enviados.add(chave)
+                            print(f"[DEMO] alerta proativo enviado: {chave}")
+        except Exception as e:
+            print(f"[DEMO] loop proativo erro: {e}")
+        _t.sleep(60 * 30)  # checa a cada 30 min
+
+
+def start_marcos_proativo():
+    """Liga o job proativo do Marcos (só se houver número configurado)."""
+    if not DEMO_DIGEST_PHONE:
+        print("[DEMO] Marcos proativo desligado (defina DEMO_DIGEST_PHONE p/ ligar)")
+        return
+    threading.Thread(target=_marcos_proativo_loop, daemon=True, name="marcos-proativo").start()
+    print(f"[DEMO] Marcos proativo ligado (resumo às {DEMO_DIGEST_HOUR}h; avisos a cada 30min)")
 
 
 @app.route("/webhook/evolution", methods=["GET", "POST"])
@@ -1957,6 +2079,14 @@ def webhook_evolution():
     texto = _extrair_texto_evolution(data)
     if not texto:
         return jsonify({"ok": True, "ignored": "sem texto"})
+
+    # Gatilho manual da proatividade (pra demonstrar o resumo ao vivo).
+    if texto.strip().lower() in ("/proativo", "/resumo", "resumo agora"):
+        threading.Thread(
+            target=lambda: send_whatsapp_text(numero, _demo_resumo_diario() or "Sem dados pro resumo agora."),
+            daemon=True,
+        ).start()
+        return jsonify({"ok": True, "trigger": "resumo"})
 
     remetente = data.get("pushName") or ""
     # Responde em background pra dar ack rápido (OpenAI leva alguns segundos).
@@ -4062,6 +4192,7 @@ if __name__ == "__main__":
     start_health_monitor()
     start_task_reminder()
     start_backup_job()
+    start_marcos_proativo()
     port = int(os.getenv("PORT", 5010))
     print(f"🚀 CRM Node Data running on port {port}")
     if supabase:

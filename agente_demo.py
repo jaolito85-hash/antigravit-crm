@@ -122,6 +122,14 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "gerar_relatorio",
+            "description": "Gera um RELATÓRIO EXECUTIVO em PDF (financeiro, pipeline, top clientes, alertas) e ENVIA no WhatsApp da pessoa. Use quando pedirem 'me manda o relatório', 'quero um PDF', 'relatório do mês', 'manda em PDF'. Depois confirme numa frase que enviou o PDF.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
     # ===== ESCRITA (ações reais no CRM, auditadas) =====
     {
         "type": "function",
@@ -202,6 +210,9 @@ class AgenteDemoCRM:
         self.sb = supabase
         self.ai = openai_client
         self.model = model
+        # Callback (numero, bytes, filename, caption) -> bool, setado pelo server.py
+        # pra enviar documento (PDF) pela Evolution. None = envio indisponível (ex: teste local).
+        self.enviar_documento = None
 
     # ---------- infra ----------
     def _fetch(self, tabela, select="*", ativos=True, limite=1000):
@@ -246,7 +257,7 @@ class AgenteDemoCRM:
     # ---------- ferramentas de leitura ----------
     def metricas_negocio(self, args, remetente):
         leads = self._fetch("leads", "id, nome, status, valor_mensal, valor_proposta, valor_fechado, created_at")
-        contratos = self._fetch("contratos", "status, valor", ativos=False)
+        contratos = self._fetch("contratos", "status, valor, data_fim, leads(nome)", ativos=False)
         receitas = self._fetch("receitas", "valor, data, status")
         despesas = self._fetch("despesas", "valor, data, status")
         tarefas = self._fetch("tarefas", "concluida, data_vencimento")
@@ -285,6 +296,12 @@ class AgenteDemoCRM:
         atrasadas = [t for t in pend if (t.get("data_vencimento") or "") < hoje_iso]
 
         top = sorted(contratos_ativos, key=lambda c: _num(c.get("valor")), reverse=True)
+        limite_30 = (hoje + timedelta(days=30)).strftime("%Y-%m-%d")
+        contratos_vencendo = [
+            {"cliente": (c.get("leads") or {}).get("nome"), "vence": c.get("data_fim")}
+            for c in contratos_ativos
+            if c.get("data_fim") and hoje_iso <= c["data_fim"] <= limite_30
+        ]
 
         return {
             "faturamento_mes": _reais(fat_mes),
@@ -301,6 +318,14 @@ class AgenteDemoCRM:
             "total_ja_fechado": _reais(total_fechado),
             "tarefas_pendentes": len(pend),
             "tarefas_atrasadas": len(atrasadas),
+            "top_clientes": [
+                {"cliente": (c.get("leads") or {}).get("nome"), "valor_mensal": _reais(c.get("valor"))}
+                for c in top[:5]
+            ],
+            "alertas": {
+                "tarefas_atrasadas": len(atrasadas),
+                "contratos_vencendo_30d": contratos_vencendo,
+            },
             "mes_referencia": mes,
         }
 
@@ -438,6 +463,96 @@ class AgenteDemoCRM:
             ],
         }
 
+    def _montar_pdf(self, m, tarefas):
+        """Monta o PDF do relatório executivo. Retorna bytes, ou None se o
+        reportlab não estiver instalado no ambiente."""
+        try:
+            import io
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.units import cm
+            from reportlab.lib import colors
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        except ImportError:
+            return None
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+                                leftMargin=1.8 * cm, rightMargin=1.8 * cm, title="Relatório Node Data")
+        ss = getSampleStyleSheet()
+        # Verde escuro nos títulos (o limão da marca fica ilegível em papel branco).
+        VERDE = colors.HexColor("#5b8c00")
+        st_titulo = ParagraphStyle("t", parent=ss["Title"], textColor=colors.HexColor("#0a0a0a"), fontSize=20, spaceAfter=2)
+        st_sub = ParagraphStyle("s", parent=ss["Normal"], textColor=colors.HexColor("#777"), fontSize=9, spaceAfter=14)
+        st_h = ParagraphStyle("h", parent=ss["Heading2"], textColor=VERDE, fontSize=12, spaceBefore=10, spaceAfter=4)
+        el = [
+            Paragraph("Relatório Executivo — Node Data", st_titulo),
+            Paragraph(f"Gerado em {_hoje().strftime('%d/%m/%Y %H:%M')} · referência {m.get('mes_referencia')}", st_sub),
+        ]
+
+        def _tab(linhas):
+            t = Table([[str(a), str(b)] for a, b in linhas], colWidths=[7 * cm, 8.4 * cm])
+            t.setStyle(TableStyle([
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+                ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#555")),
+                ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor("#0a0a0a")),
+                ("FONTNAME", (1, 0), (1, -1), "Helvetica-Bold"),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LINEBELOW", (0, 0), (-1, -2), 0.4, colors.HexColor("#eeeeee")),
+            ]))
+            return t
+
+        el.append(Paragraph("Financeiro (mês)", st_h))
+        el.append(_tab([
+            ("Faturamento do mês", m.get("faturamento_mes")),
+            ("Despesas do mês", m.get("despesas_mes")),
+            ("Lucro do mês", m.get("lucro_mes")),
+            ("Receita recorrente (MRR)", m.get("mrr_receita_recorrente_ativa")),
+            ("Faturamento no ano", m.get("faturamento_ano")),
+        ]))
+
+        el.append(Paragraph("Pipeline comercial", st_h))
+        etapas = m.get("leads_por_etapa") or {}
+        linhas_p = [(f"Leads em {k}", v) for k, v in etapas.items()]
+        linhas_p += [
+            ("Valor em negociação", m.get("valor_em_negociacao")),
+            ("Contratos ativos", m.get("contratos_ativos")),
+            ("Novos leads no mês", m.get("novos_leads_no_mes")),
+        ]
+        el.append(_tab(linhas_p))
+
+        top = m.get("top_clientes") or []
+        if top:
+            el.append(Paragraph("Top clientes (mensal)", st_h))
+            el.append(_tab([(c.get("cliente") or "—", c.get("valor_mensal")) for c in top]))
+
+        al = m.get("alertas") or {}
+        el.append(Paragraph("Atenção", st_h))
+        linhas_a = [("Tarefas atrasadas", al.get("tarefas_atrasadas", 0))]
+        for c in (al.get("contratos_vencendo_30d") or []):
+            linhas_a.append((f"Contrato vencendo — {c.get('cliente')}", c.get("vence")))
+        el.append(_tab(linhas_a))
+
+        el.append(Spacer(1, 18))
+        el.append(Paragraph("Node Data · gerado pelo assistente Marcos", st_sub))
+        doc.build(el)
+        return buf.getvalue()
+
+    def gerar_relatorio(self, args, remetente, numero=None):
+        m = self.metricas_negocio({}, remetente)
+        tarefas = self.listar_tarefas({"filtro": "abertas"}, remetente)
+        pdf = self._montar_pdf(m, tarefas)
+        if pdf is None:
+            return {"ok": False, "erro": "geração de PDF indisponível (reportlab não instalado)"}
+        if not (self.enviar_documento and numero):
+            return {"ok": False, "erro": "PDF gerado, mas não há canal pra enviar (sem WhatsApp)."}
+        try:
+            ok = self.enviar_documento(numero, pdf, "relatorio-nodedata.pdf",
+                                       "📊 Seu relatório executivo da Node Data")
+            return {"ok": bool(ok), "enviado": bool(ok), "arquivo": "relatorio-nodedata.pdf"}
+        except Exception as e:
+            return {"ok": False, "erro": str(e)[:200]}
+
     # ---------- ferramentas de escrita ----------
     def criar_lead(self, args, remetente):
         nome = (args.get("nome") or "").strip()
@@ -514,7 +629,9 @@ class AgenteDemoCRM:
             return {"ok": False, "erro": str(e)[:200]}
 
     # ---------- dispatcher + loop ----------
-    def _dispatch(self, nome, args, remetente):
+    def _dispatch(self, nome, args, remetente, numero=None):
+        if nome == "gerar_relatorio":
+            return self.gerar_relatorio(args, remetente, numero)
         fn = {
             "metricas_negocio": self.metricas_negocio,
             "buscar_cliente": self.buscar_cliente,
@@ -562,12 +679,19 @@ class AgenteDemoCRM:
             "Após agir, confirme em uma frase o que foi feito.\n"
             "- Baseie-se SOMENTE nos dados das ferramentas. Se não houver ferramenta ou dado pro que pediram, "
             "diga que não tem — NUNCA invente números/clientes/valores e NUNCA troque um conceito por outro.\n\n"
+            "PROATIVIDADE (importante — você ANTECIPA, não só responde):\n"
+            "- Ao terminar de responder, quando fizer sentido, ofereça UM próximo passo útil: criar um "
+            "follow-up, mandar o *relatório em PDF*, avisar todo dia de manhã (resumo diário), ou monitorar "
+            "algo. Ex: 'Quer que eu te mande isso em PDF?' ou 'Quer que eu crie um follow-up pra isso?'.\n"
+            "- Sinalize com ⚠️ o que merece atenção quando aparecer no campo `alertas` do metricas_negocio "
+            "(tarefas atrasadas, contratos vencendo nos próximos 30 dias) — mesmo que não tenham perguntado.\n"
+            "- No máximo UMA oferta curta por resposta, só quando agrega de verdade. Nunca seja insistente.\n\n"
             "ESTILO (WhatsApp): responda em português do Brasil, CURTO e direto. Use no máximo alguns "
             "tópicos com '-' e *negrito* do WhatsApp (um asterisco) para os números importantes. Valores "
             "sempre em R$. Nada de tabelas nem textão."
         )
 
-    def responder(self, pergunta, remetente="", max_iter=6):
+    def responder(self, pergunta, remetente="", numero=None, max_iter=6):
         """Recebe a pergunta do WhatsApp, roda o loop de tools e devolve o TEXTO
         da resposta pronto pra enviar."""
         if not self.ai:
@@ -603,7 +727,7 @@ class AgenteDemoCRM:
                         args = json.loads(tc.function.arguments or "{}")
                     except Exception:
                         args = {}
-                    resultado = self._dispatch(tc.function.name, args, remetente)
+                    resultado = self._dispatch(tc.function.name, args, remetente, numero)
                     messages.append({
                         "role": "tool", "tool_call_id": tc.id,
                         "content": json.dumps(resultado, default=str, ensure_ascii=False)[:4000],
