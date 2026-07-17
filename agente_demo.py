@@ -101,6 +101,27 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "saldo_contas",
+            "description": "Saldo atual de cada CONTA BANCÁRIA (ex: Itaú, ASAAS): saldo inicial + receitas recebidas − despesas pagas daquela conta. Use para 'qual o saldo do Itaú', 'quanto tem no banco', 'saldo das contas'. É sobre CONTA BANCÁRIA, não sobre faturamento.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "consultar_contratos",
+            "description": "Lista e conta CONTRATOS por status: 'ativo' (vigente), 'encerrado' (terminado/finalizado) ou 'negociacao'. Use para 'contratos encerrados', 'quantos contratos ativos', 'contratos em negociação'. ATENÇÃO: 'contrato encerrado' NÃO é a mesma coisa que lead na etapa 'Fechado' do funil — não responda sobre contratos usando contagem de leads.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": ["string", "null"], "enum": ["ativo", "encerrado", "negociacao", None], "description": "Filtra por status do contrato. null = todos."}
+                },
+            },
+        },
+    },
     # ===== ESCRITA (ações reais no CRM, auditadas) =====
     {
         "type": "function",
@@ -375,6 +396,48 @@ class AgenteDemoCRM:
             ],
         }
 
+    def saldo_contas(self, args, remetente):
+        contas = self._fetch("contas_bancarias", "id, nome, banco, saldo_inicial", ativos=False)
+        receitas = self._fetch("receitas", "valor, status, conta_id")
+        despesas = self._fetch("despesas", "valor, status, conta_id")
+        out = []
+        for c in contas:
+            cid = c.get("id")
+            entradas = sum(_num(r.get("valor")) for r in receitas
+                           if r.get("conta_id") == cid and r.get("status") == "recebido")
+            saidas = sum(_num(d.get("valor")) for d in despesas
+                         if d.get("conta_id") == cid and d.get("status") == "pago")
+            saldo = _num(c.get("saldo_inicial")) + entradas - saidas
+            out.append({
+                "conta": c.get("nome"), "banco": c.get("banco"),
+                "saldo_atual": _reais(saldo),
+                "entradas_recebidas": _reais(entradas),
+                "saidas_pagas": _reais(saidas),
+            })
+        return {"contas": out}
+
+    def consultar_contratos(self, args, remetente):
+        status = args.get("status")
+        contratos = self._fetch(
+            "contratos",
+            "nome, tipo, valor, status, data_inicio, data_fim, leads(nome), entidades(razao_social)",
+            ativos=False,
+        )
+        if status:
+            contratos = [c for c in contratos if (c.get("status") or "") == status]
+        return {
+            "total": len(contratos),
+            "contratos": [
+                {
+                    "cliente": (c.get("leads") or {}).get("nome") or (c.get("entidades") or {}).get("razao_social"),
+                    "nome": c.get("nome"), "tipo": c.get("tipo"),
+                    "valor_mensal": _reais(c.get("valor")), "status": c.get("status"),
+                    "inicio": c.get("data_inicio"), "fim": c.get("data_fim"),
+                }
+                for c in contratos
+            ],
+        }
+
     # ---------- ferramentas de escrita ----------
     def criar_lead(self, args, remetente):
         nome = (args.get("nome") or "").strip()
@@ -457,6 +520,8 @@ class AgenteDemoCRM:
             "buscar_cliente": self.buscar_cliente,
             "listar_leads": self.listar_leads,
             "listar_tarefas": self.listar_tarefas,
+            "saldo_contas": self.saldo_contas,
+            "consultar_contratos": self.consultar_contratos,
             "criar_lead": self.criar_lead,
             "criar_tarefa": self.criar_tarefa,
             "mudar_etapa_lead": self.mudar_etapa_lead,
@@ -483,13 +548,20 @@ class AgenteDemoCRM:
             f"DATA DE HOJE: {hoje.strftime('%d/%m/%Y (%A)')}. Fuso de Brasília. "
             "Calcule datas relativas (amanhã, sexta, semana que vem) a partir de hoje.\n"
             f"QUEM ESTÁ FALANDO: {remetente or 'um sócio'}.\n\n"
+            "GLOSSÁRIO — NÃO confunda estes conceitos (cada um tem SUA ferramenta):\n"
+            "- 'lead/negócio Fechado' = ETAPA DO FUNIL (venda ganha) → `metricas_negocio`/`listar_leads`.\n"
+            "- 'contrato ativo / encerrado / em negociação' = STATUS DO CONTRATO → `consultar_contratos`. "
+            "NUNCA responda sobre contratos usando a contagem de leads 'Fechado' — são coisas diferentes.\n"
+            "- 'saldo / conta / banco (Itaú, ASAAS)' = CONTA BANCÁRIA → `saldo_contas`.\n"
+            "- 'faturamento / lucro / despesa / MRR / pipeline' → `metricas_negocio`.\n\n"
             "COMO AGIR:\n"
-            "- Para QUALQUER pergunta sobre números/dinheiro/pipeline, chame `metricas_negocio` primeiro.\n"
+            "- Escolha a ferramenta pelo CONCEITO EXATO que a pessoa perguntou (veja o glossário). Se pediu "
+            "contrato, é contrato; se pediu saldo, é conta bancária; não troque um pelo outro.\n"
             "- Para detalhes de um cliente, use `buscar_cliente`. Para listas, `listar_leads`/`listar_tarefas`.\n"
             "- Você PODE executar ações reais (criar lead/tarefa, mudar etapa, lançar receita) quando pedirem. "
             "Após agir, confirme em uma frase o que foi feito.\n"
-            "- Baseie-se SOMENTE nos dados retornados pelas ferramentas. Se não achar, diga que não encontrou — "
-            "NUNCA invente números, clientes ou valores.\n\n"
+            "- Baseie-se SOMENTE nos dados das ferramentas. Se não houver ferramenta ou dado pro que pediram, "
+            "diga que não tem — NUNCA invente números/clientes/valores e NUNCA troque um conceito por outro.\n\n"
             "ESTILO (WhatsApp): responda em português do Brasil, CURTO e direto. Use no máximo alguns "
             "tópicos com '-' e *negrito* do WhatsApp (um asterisco) para os números importantes. Valores "
             "sempre em R$. Nada de tabelas nem textão."
