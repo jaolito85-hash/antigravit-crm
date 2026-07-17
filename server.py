@@ -1936,6 +1936,76 @@ def _extrair_texto_evolution(data):
     ).strip()
 
 
+def _extensao_audio(mimetype):
+    """Extensão de arquivo coerente com o mimetype pro decoder do Whisper."""
+    m = (mimetype or "").lower()
+    if "mp4" in m or "m4a" in m or "aac" in m:
+        return "m4a"
+    if "mpeg" in m or "mp3" in m:
+        return "mp3"
+    if "wav" in m:
+        return "wav"
+    return "ogg"  # WhatsApp PTT = audio/ogg; codecs=opus
+
+
+def transcrever_audio_evolution(data):
+    """Baixa o áudio de uma mensagem do WhatsApp (Evolution) e transcreve via Whisper.
+
+    O WhatsApp entrega a mídia CRIPTOGRAFADA (Baileys), então pedimos à Evolution o
+    base64 já descriptografado via getBase64FromMediaMessage. Retorna o texto ou None
+    (o bot segue funcionando sem áudio)."""
+    if not openai_client:
+        return None
+    import base64
+    msg = (data or {}).get("message") or {}
+    audio = msg.get("audioMessage") or {}
+    mimetype = audio.get("mimetype") or "audio/ogg"
+
+    # 1) Alguns setups da Evolution (WEBHOOK_BASE64=true) já mandam o base64 no payload.
+    b64 = None
+    for cand in (msg.get("base64"), (data or {}).get("base64")):
+        if isinstance(cand, str) and cand:
+            b64 = cand
+            break
+
+    # 2) Senão, pede o base64 descriptografado à Evolution pelo id da mensagem.
+    if not b64:
+        mid = ((data or {}).get("key") or {}).get("id")
+        if not (mid and DEMO_EVOLUTION_URL and DEMO_EVOLUTION_KEY and DEMO_EVOLUTION_INSTANCE):
+            return None
+        try:
+            resp = requests.post(
+                f"{DEMO_EVOLUTION_URL}/chat/getBase64FromMediaMessage/{DEMO_EVOLUTION_INSTANCE}",
+                json={"message": {"key": {"id": mid}}, "convertToMp4": False},
+                headers={"apikey": DEMO_EVOLUTION_KEY, "Content-Type": "application/json"},
+                timeout=20,
+            )
+            if resp.status_code not in (200, 201):
+                print(f"[DEMO] getBase64FromMediaMessage falhou {resp.status_code}: {resp.text[:200]}")
+                return None
+            b64 = (resp.json() or {}).get("base64")
+        except Exception as e:
+            print(f"[DEMO] getBase64FromMediaMessage erro: {e}")
+            return None
+    if not b64:
+        return None
+
+    # 3) Decodifica e transcreve com Whisper (nome preserva a extensão p/ o decoder).
+    try:
+        conteudo = base64.b64decode(b64)
+        transcript = openai_client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(f"audio.{_extensao_audio(mimetype)}", conteudo),
+            language="pt",
+        )
+        texto = (getattr(transcript, "text", "") or "").strip()
+        print(f"[DEMO] 🎤 áudio transcrito ({len(texto)} chars)")
+        return texto or None
+    except Exception as e:
+        print(f"[DEMO] transcrição de áudio erro: {e}")
+        return None
+
+
 _demo_historico = {}  # numero -> últimos turnos [{role, content}] (memória de conversa)
 
 
@@ -1953,6 +2023,16 @@ def _processar_demo(numero, texto, remetente):
         print(f"[DEMO] respondido {_mascara_id(numero)}: {resposta[:80]}")
     except Exception as e:
         print(f"[DEMO] processamento erro: {e}")
+
+
+def _processar_demo_audio(numero, data, remetente):
+    """Transcreve o áudio recebido (Whisper) e roda o fluxo normal do agente sobre a fala.
+    Feito em thread porque baixar + transcrever leva alguns segundos."""
+    texto = transcrever_audio_evolution(data)
+    if not texto:
+        send_whatsapp_text(numero, "Não consegui entender o áudio 😕. Pode repetir ou mandar por texto?")
+        return
+    _processar_demo(numero, texto, remetente)
 
 
 # Liga o envio de documento (PDF) do agente à Evolution (só se o agente carregou).
@@ -2086,7 +2166,17 @@ def webhook_evolution():
             _demo_msgs_vistas.clear()
 
     texto = _extrair_texto_evolution(data)
+    remetente = data.get("pushName") or ""
+    tem_audio = bool(((data.get("message") or {}).get("audioMessage")))
+
     if not texto:
+        # Sem texto mas com áudio de voz: transcreve via Whisper e segue o fluxo normal.
+        # Feito em background (baixar + transcrever leva alguns segundos → ack rápido).
+        if tem_audio:
+            threading.Thread(
+                target=_processar_demo_audio, args=(numero, data, remetente), daemon=True
+            ).start()
+            return jsonify({"ok": True, "audio": True})
         return jsonify({"ok": True, "ignored": "sem texto"})
 
     # Gatilho manual da proatividade (pra demonstrar o resumo ao vivo).
@@ -2097,7 +2187,6 @@ def webhook_evolution():
         ).start()
         return jsonify({"ok": True, "trigger": "resumo"})
 
-    remetente = data.get("pushName") or ""
     # Responde em background pra dar ack rápido (OpenAI leva alguns segundos).
     threading.Thread(target=_processar_demo, args=(numero, texto, remetente), daemon=True).start()
     return jsonify({"ok": True})
