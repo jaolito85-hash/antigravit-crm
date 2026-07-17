@@ -1864,8 +1864,10 @@ else:
 agente_demo_crm = None
 try:
     from agente_demo import AgenteDemoCRM
-    agente_demo_crm = AgenteDemoCRM(supabase, openai_client, OPENAI_MODEL)
-    print("🎬 Agente de demo (WhatsApp) pronto")
+    # Modelo próprio da demo (não mexe no modelo do agente do Telegram).
+    _demo_model = os.getenv("DEMO_OPENAI_MODEL", OPENAI_MODEL)
+    agente_demo_crm = AgenteDemoCRM(supabase, openai_client, _demo_model)
+    print(f"🎬 Agente de demo (WhatsApp) pronto — modelo {_demo_model}")
 except Exception as _ade:
     print(f"⚠️ Agente de demo não carregou: {_ade}")
 
