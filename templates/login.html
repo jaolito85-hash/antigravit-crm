@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Node Data CRM | Login</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=DM+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -15,8 +15,8 @@
         }
 
         body {
-            font-family: 'Inter', sans-serif;
-            background: #0a0a0f;
+            font-family: 'Instrument Sans', sans-serif;
+            background: #050505;
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -30,7 +30,7 @@
             position: fixed;
             inset: 0;
             background:
-                radial-gradient(ellipse 600px 400px at 20% 30%, rgba(99, 102, 241, 0.08), transparent),
+                radial-gradient(ellipse 600px 400px at 20% 30%, rgba(223, 255, 91, 0.08), transparent),
                 radial-gradient(ellipse 400px 300px at 80% 70%, rgba(16, 185, 129, 0.06), transparent);
             z-index: 0;
         }
@@ -44,8 +44,8 @@
         }
 
         .login-box {
-            background: rgba(15, 15, 25, 0.85);
-            border: 1px solid rgba(99, 102, 241, 0.15);
+            background: rgba(12, 12, 12, 0.85);
+            border: 1px solid rgba(223, 255, 91, 0.15);
             border-radius: 20px;
             padding: 48px 36px;
             backdrop-filter: blur(24px);
@@ -60,7 +60,7 @@
         .login-logo .icon {
             width: 56px;
             height: 56px;
-            background: linear-gradient(135deg, #6366f1, #10b981);
+            background: linear-gradient(135deg, #dfff5b, #10b981);
             border-radius: 16px;
             display: inline-flex;
             align-items: center;
@@ -70,14 +70,15 @@
         }
 
         .login-logo h1 {
-            color: #f0f0f5;
+            font-family: 'Archivo', 'Instrument Sans', sans-serif;
+            color: #f7f7f2;
             font-size: 22px;
             font-weight: 700;
             letter-spacing: -0.5px;
         }
 
         .login-logo p {
-            color: #666;
+            color: #8b8d87;
             font-size: 13px;
             margin-top: 4px;
         }
@@ -88,7 +89,7 @@
 
         .form-group label {
             display: block;
-            color: #888;
+            color: #8b8d87;
             font-size: 12px;
             font-weight: 500;
             text-transform: uppercase;
@@ -102,16 +103,16 @@
             background: rgba(255, 255, 255, 0.04);
             border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 12px;
-            color: #f0f0f5;
-            font-family: 'Inter', sans-serif;
+            color: #f7f7f2;
+            font-family: 'Instrument Sans', sans-serif;
             font-size: 14px;
             transition: all 0.2s;
             outline: none;
         }
 
         .form-group input:focus {
-            border-color: #6366f1;
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+            border-color: #dfff5b;
+            box-shadow: 0 0 0 3px rgba(223, 255, 91, 0.15);
             background: rgba(255, 255, 255, 0.06);
         }
 
@@ -122,13 +123,13 @@
         .btn-login {
             width: 100%;
             padding: 14px;
-            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            background: linear-gradient(135deg, #dfff5b, #ebff9a);
             border: none;
             border-radius: 12px;
-            color: #fff;
-            font-family: 'Inter', sans-serif;
+            color: #090a05;
+            font-family: 'Instrument Sans', sans-serif;
             font-size: 14px;
-            font-weight: 600;
+            font-weight: 700;
             cursor: pointer;
             transition: all 0.2s;
             margin-top: 8px;
@@ -137,7 +138,7 @@
         .btn-login:hover {
             filter: brightness(1.1);
             transform: translateY(-1px);
-            box-shadow: 0 8px 24px rgba(99, 102, 241, 0.3);
+            box-shadow: 0 8px 24px rgba(223, 255, 91, 0.3);
         }
 
         .error-msg {

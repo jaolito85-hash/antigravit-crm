@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Node Data CRM</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=DM+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/remixicon@4.1.0/fonts/remixicon.css" rel="stylesheet">
     <style>
         * {
@@ -15,27 +15,41 @@
         }
 
         :root {
-            --bg: #0a0a0f;
-            --surface: #111118;
-            --surface2: #16161f;
-            --border: rgba(255, 255, 255, .06);
-            --border2: rgba(255, 255, 255, .1);
-            --text: #e8e8ed;
-            --text2: #888;
-            --primary: #6366f1;
-            --primary-glow: rgba(99, 102, 241, .15);
+            --bg: #050505;
+            --surface: #0a0a0a;
+            --surface2: #121212;
+            --border: #242424;
+            --border2: #383838;
+            --text: #f7f7f2;
+            --text2: #8b8d87;
+            --primary: #dfff5b;
+            --primary-contrast: #090a05;
+            --primary-hover: #ebff9a;
+            --primary-glow: rgba(223, 255, 91, .14);
             --green: #10b981;
             --red: #ef4444;
-            --yellow: #f59e0b;
+            --yellow: #ffbf47;
             --blue: #3b82f6
         }
 
         body {
-            font-family: 'Inter', sans-serif;
+            font-family: 'Instrument Sans', sans-serif;
             background: var(--bg);
             color: var(--text);
             display: flex;
             min-height: 100vh
+        }
+
+        /* Títulos em Archivo (display) — dá a "cara" do Funil Total */
+        .sidebar-logo h2,
+        .page-header h1,
+        .card-header h3,
+        .modal h3,
+        .ld-header h2,
+        .stat-value,
+        .tk-stat-value,
+        .acc-card .acc-saldo {
+            font-family: 'Archivo', 'Instrument Sans', sans-serif;
         }
 
         /* SIDEBAR */
@@ -63,7 +77,7 @@
         .sidebar-logo .icon {
             width: 36px;
             height: 36px;
-            background: linear-gradient(135deg, #6366f1, #10b981);
+            background: linear-gradient(135deg, #dfff5b, #10b981);
             border-radius: 10px;
             display: flex;
             align-items: center;
@@ -143,7 +157,7 @@
             width: 32px;
             height: 32px;
             border-radius: 8px;
-            background: linear-gradient(135deg, #6366f1, #10b981);
+            background: linear-gradient(135deg, #dfff5b, #10b981);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -173,7 +187,7 @@
             color: #ef4444;
             font-size: 12px;
             cursor: pointer;
-            font-family: 'Inter';
+            font-family: 'Instrument Sans';
             transition: .15s
         }
 
@@ -353,8 +367,8 @@
         }
 
         .badge-purple {
-            background: rgba(99, 102, 241, .12);
-            color: #6366f1
+            background: rgba(223, 255, 91, .12);
+            color: #dfff5b
         }
 
         .badge-gray {
@@ -370,7 +384,7 @@
             font-weight: 600;
             cursor: pointer;
             border: none;
-            font-family: 'Inter';
+            font-family: 'Instrument Sans';
             transition: .15s;
             display: inline-flex;
             align-items: center;
@@ -379,7 +393,7 @@
 
         .btn-primary {
             background: var(--primary);
-            color: #fff
+            color: var(--primary-contrast)
         }
 
         .btn-primary:hover {
@@ -475,7 +489,7 @@
             border: 1px solid var(--border);
             border-radius: 10px;
             color: var(--text);
-            font-family: 'Inter';
+            font-family: 'Instrument Sans';
             font-size: 13px;
             outline: none;
             transition: .2s
@@ -633,7 +647,7 @@
         }
 
         tr.clickable:hover td {
-            background: rgba(99, 102, 241, .06)
+            background: rgba(223, 255, 91, .06)
         }
 
         .actions {
@@ -688,7 +702,7 @@
             transition: .15s;
             border: none;
             background: none;
-            font-family: 'Inter'
+            font-family: 'Instrument Sans'
         }
 
         .tab.active {
@@ -752,7 +766,7 @@
         .inbox-meta-footer { font-size: 12px; color: var(--text2); margin-top: 6px; display: flex; align-items: center; gap: 6px }
         .inbox-meta-footer.triado { color: var(--green) }
         .inbox-empty { text-align: center; padding: 40px 20px; color: var(--text2); font-size: 13px }
-        .badge-count { background: var(--primary); color: #fff; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 999px; margin-left: auto; min-width: 18px; text-align: center; line-height: 1.4 }
+        .badge-count { background: var(--primary); color: var(--primary-contrast); font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 999px; margin-left: auto; min-width: 18px; text-align: center; line-height: 1.4 }
 
         /* ============================================================
            TAREFAS V2 — Kanban premium (redesign)
@@ -761,7 +775,7 @@
         /* Header da aba */
         .tk-header { align-items: flex-start }
         .tk-title { display: flex; align-items: center; gap: 14px }
-        .tk-title-icon { width: 46px; height: 46px; border-radius: 13px; background: linear-gradient(135deg, var(--primary), #8b5cf6); display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff; box-shadow: 0 8px 22px -8px rgba(99, 102, 241, .8); flex-shrink: 0 }
+        .tk-title-icon { width: 46px; height: 46px; border-radius: 13px; background: linear-gradient(135deg, var(--primary), #10b981); display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--primary-contrast); box-shadow: 0 8px 22px -8px rgba(223, 255, 91, .8); flex-shrink: 0 }
         .tk-header-actions { display: flex; gap: 10px; align-items: center }
         .tk-bell { position: relative; width: 40px; height: 40px; border-radius: 11px; border: 1px solid var(--border); background: var(--surface); color: var(--text2); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px; transition: .15s }
         .tk-bell:hover { color: var(--text); border-color: var(--border2) }
@@ -792,7 +806,7 @@
         .tk-stat-label { font-size: 12px; color: var(--text2); font-weight: 500 }
         .tk-stat-value { font-size: 28px; font-weight: 700; letter-spacing: -1px; line-height: 1.15; margin: 2px 0 }
         .tk-stat-sub { font-size: 11px; color: var(--text2) }
-        .ico-indigo { background: rgba(99, 102, 241, .14); color: #818cf8 }
+        .ico-indigo { background: rgba(223, 255, 91, .14); color: #dfff5b }
         .ico-red { background: rgba(239, 68, 68, .14); color: #f87171 }
         .ico-amber { background: rgba(245, 158, 11, .14); color: #fbbf24 }
         .ico-blue { background: rgba(56, 189, 248, .14); color: #38bdf8 }
@@ -805,11 +819,11 @@
         .kanban-col-header .kc-title { display: flex; align-items: center; gap: 9px }
         .kanban-col-header .kc-ico { width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px }
         .kanban-col-header .count { background: rgba(255, 255, 255, .07); padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--text); letter-spacing: 0; text-transform: none }
-        .col-aberta { color: #c7d2fe }
+        .col-aberta { color: #dfff5b }
         .col-em_andamento { color: var(--yellow) }
         .col-aguardando { color: #7dd3fc }
         .col-concluida { color: var(--green) }
-        .col-aberta .kc-ico { background: rgba(99, 102, 241, .16); color: #818cf8 }
+        .col-aberta .kc-ico { background: rgba(223, 255, 91, .16); color: #dfff5b }
         .col-em_andamento .kc-ico { background: rgba(245, 158, 11, .16); color: #fbbf24 }
         .col-aguardando .kc-ico { background: rgba(56, 189, 248, .16); color: #38bdf8 }
         .col-concluida .kc-ico { background: rgba(16, 185, 129, .16); color: #34d399 }
@@ -833,7 +847,7 @@
         /* Meta rows */
         .kanban-card .meta { font-size: 12px; color: var(--text2); display: flex; gap: 8px; align-items: center; justify-content: space-between }
         .kanban-card .meta-resp { display: flex; align-items: center; gap: 7px; min-width: 0 }
-        .kanban-card .meta-resp .av { width: 22px; height: 22px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), #8b5cf6); color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0 }
+        .kanban-card .meta-resp .av { width: 22px; height: 22px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), #10b981); color: var(--primary-contrast); font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0 }
         .kanban-card .meta-resp span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
         .kanban-card .meta-date { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; color: #cbd5e1; font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace; font-size: 11.5px; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: .2px }
         .kanban-card .meta-date.overdue-flag { color: #cbd5e1 }
@@ -960,13 +974,13 @@
         .tab-empty { text-align: center; padding: 30px; color: var(--text2); font-size: 13px }
 
         /* AGENTE IA (passo 3) */
-        .ai-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 500; background: linear-gradient(135deg, rgba(99,102,241,.12), rgba(16,185,129,.12)); border: 1px solid rgba(99,102,241,.3); color: var(--primary); margin-top: 8px }
+        .ai-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 500; background: linear-gradient(135deg, rgba(223,255,91,.12), rgba(16,185,129,.12)); border: 1px solid rgba(223,255,91,.3); color: var(--primary); margin-top: 8px }
         .ai-badge .conf { color: var(--text2); font-size: 10px; font-weight: 400 }
         .ai-badge.pending { background: var(--surface2); border-color: var(--border); color: var(--text2) }
         .ai-badge.error { background: rgba(239,68,68,.08); border-color: rgba(239,68,68,.3); color: var(--red) }
-        .ai-suggestion-box { background: linear-gradient(135deg, rgba(99,102,241,.08), rgba(16,185,129,.04)); border: 1px solid rgba(99,102,241,.25); border-radius: 10px; padding: 14px; margin-top: 6px }
+        .ai-suggestion-box { background: linear-gradient(135deg, rgba(223,255,91,.08), rgba(16,185,129,.04)); border: 1px solid rgba(223,255,91,.25); border-radius: 10px; padding: 14px; margin-top: 6px }
         .ai-suggestion-box .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; font-weight: 600; color: var(--primary) }
-        .ai-suggestion-box .action-pill { padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--primary); color: #fff; margin-left: auto }
+        .ai-suggestion-box .action-pill { padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--primary); color: var(--primary-contrast); margin-left: auto }
         .ai-suggestion-box .reasoning { font-size: 13px; color: var(--text); margin-bottom: 10px; line-height: 1.5 }
         .ai-suggestion-box .payload-summary { font-size: 12px; color: var(--text2); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px }
         .ai-suggestion-box .payload-summary .k { color: var(--text2) }
@@ -2425,7 +2439,7 @@
                 const acts = Array.isArray(m.ai_actions_taken) ? m.ai_actions_taken : [];
                 const askedQuestion = aiHasPendingQuestion(m);
                 if (askedQuestion && m.status === 'inbox') {
-                    return `<div class="ai-badge" style="background:linear-gradient(135deg,rgba(245,158,11,.15),rgba(99,102,241,.08));border-color:rgba(245,158,11,.4);color:var(--yellow)"><i class="ri-chat-3-line"></i> 💬 Agente aguardando sua resposta no Telegram</div>`;
+                    return `<div class="ai-badge" style="background:linear-gradient(135deg,rgba(245,158,11,.15),rgba(223,255,91,.08));border-color:rgba(245,158,11,.4);color:var(--yellow)"><i class="ri-chat-3-line"></i> 💬 Agente aguardando sua resposta no Telegram</div>`;
                 }
                 const useful = acts.filter(a => a.action && a.action !== 'buscar_lead' && a.action !== 'finalizar' && a.action !== 'responder_no_telegram');
                 if (useful.length > 0) {
