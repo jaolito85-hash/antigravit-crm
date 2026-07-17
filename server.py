@@ -1936,11 +1936,20 @@ def _extrair_texto_evolution(data):
     ).strip()
 
 
+_demo_historico = {}  # numero -> últimos turnos [{role, content}] (memória de conversa)
+
+
 def _processar_demo(numero, texto, remetente):
     """Roda o agente e envia a resposta (em thread, fora do ciclo do webhook)."""
     try:
-        resposta = agente_demo_crm.responder(texto, remetente=remetente, numero=numero)
+        hist = _demo_historico.get(numero, [])
+        resposta = agente_demo_crm.responder(texto, remetente=remetente, numero=numero, historico=hist)
         send_whatsapp_text(numero, resposta)
+        # Guarda o turno pra dar MEMÓRIA de conversa (mantém as últimas 4 trocas).
+        _demo_historico[numero] = (hist + [
+            {"role": "user", "content": texto},
+            {"role": "assistant", "content": resposta},
+        ])[-8:]
         print(f"[DEMO] respondido {_mascara_id(numero)}: {resposta[:80]}")
     except Exception as e:
         print(f"[DEMO] processamento erro: {e}")

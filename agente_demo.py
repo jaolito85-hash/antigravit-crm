@@ -674,6 +674,9 @@ class AgenteDemoCRM:
             "COMO AGIR:\n"
             "- Escolha a ferramenta pelo CONCEITO EXATO que a pessoa perguntou (veja o glossário). Se pediu "
             "contrato, é contrato; se pediu saldo, é conta bancária; não troque um pelo outro.\n"
+            "- Se a pessoa CONFIRMAR algo que você acabou de oferecer ('quero', 'pode', 'manda', 'isso', "
+            "'esse mesmo', 'sim'), EXECUTE na hora chamando a ferramenta certa — NUNCA pergunte de novo "
+            "o que ela quer. Você TEM o histórico da conversa: use-o pra saber a que ela está dizendo sim.\n"
             "- Para detalhes de um cliente, use `buscar_cliente`. Para listas, `listar_leads`/`listar_tarefas`.\n"
             "- Você PODE executar ações reais (criar lead/tarefa, mudar etapa, lançar receita) quando pedirem. "
             "Após agir, confirme em uma frase o que foi feito.\n"
@@ -691,15 +694,16 @@ class AgenteDemoCRM:
             "sempre em R$. Nada de tabelas nem textão."
         )
 
-    def responder(self, pergunta, remetente="", numero=None, max_iter=6):
+    def responder(self, pergunta, remetente="", numero=None, historico=None, max_iter=6):
         """Recebe a pergunta do WhatsApp, roda o loop de tools e devolve o TEXTO
-        da resposta pronto pra enviar."""
+        da resposta pronto pra enviar. `historico` = turnos anteriores
+        [{role, content}] pra o agente ter MEMÓRIA da conversa."""
         if not self.ai:
             return "⚠️ O agente de IA está sem a OPENAI_API_KEY configurada."
-        messages = [
-            {"role": "system", "content": self._system_prompt(remetente)},
-            {"role": "user", "content": pergunta},
-        ]
+        messages = [{"role": "system", "content": self._system_prompt(remetente)}]
+        if historico:
+            messages.extend(historico)
+        messages.append({"role": "user", "content": pergunta})
         kwargs = {"model": self.model, "tools": TOOLS, "tool_choice": "auto", "timeout": 45}
         try:
             for _ in range(max_iter):
