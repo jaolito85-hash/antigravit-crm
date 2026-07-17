@@ -1857,6 +1857,111 @@ else:
     print("⚠️ OPENAI_API_KEY ausente — agente IA desligado (CRM segue funcionando)")
 
 
+# ============================================================
+# AGENTE DE DEMO (WhatsApp via Evolution) — ISOLADO do agente do Telegram.
+# Responde perguntas e executa ações sobre o CRM. Ver agente_demo.py.
+# ============================================================
+agente_demo_crm = None
+try:
+    from agente_demo import AgenteDemoCRM
+    agente_demo_crm = AgenteDemoCRM(supabase, openai_client, OPENAI_MODEL)
+    print("🎬 Agente de demo (WhatsApp) pronto")
+except Exception as _ade:
+    print(f"⚠️ Agente de demo não carregou: {_ade}")
+
+DEMO_WEBHOOK_TOKEN = os.getenv("DEMO_WEBHOOK_TOKEN", "")
+DEMO_ALLOWED_PHONES = [p.strip() for p in os.getenv("DEMO_ALLOWED_PHONES", "").split(",") if p.strip()]
+# Instância Evolution DEDICADA ao bot de demo (o "Marcos"). Por padrão reusa o
+# mesmo servidor Evolution dos alertas (URL/KEY), mudando só o nome da instância.
+DEMO_EVOLUTION_URL = os.getenv("DEMO_EVOLUTION_URL", CRM_EVOLUTION_URL)
+DEMO_EVOLUTION_KEY = os.getenv("DEMO_EVOLUTION_KEY", CRM_EVOLUTION_KEY)
+DEMO_EVOLUTION_INSTANCE = os.getenv("DEMO_EVOLUTION_INSTANCE", "marcos")
+_demo_msgs_vistas = set()  # dedupe em memória (reinicia no restart — ok pra demo)
+
+
+def send_whatsapp_text(number, text):
+    """Envia um texto a um número pela instância Evolution do bot de demo (Marcos).
+    number = só dígitos com DDI."""
+    if not all([DEMO_EVOLUTION_URL, DEMO_EVOLUTION_KEY, DEMO_EVOLUTION_INSTANCE]):
+        print("[DEMO] Evolution (demo) não configurada; resposta não enviada.")
+        return False
+    url = f"{DEMO_EVOLUTION_URL}/message/sendText/{DEMO_EVOLUTION_INSTANCE}"
+    headers = {"apikey": DEMO_EVOLUTION_KEY, "Content-Type": "application/json"}
+    try:
+        resp = requests.post(url, json={"number": number, "text": text}, headers=headers, timeout=15)
+        return resp.status_code in (200, 201)
+    except Exception as e:
+        print(f"[DEMO] envio WhatsApp erro: {e}")
+        return False
+
+
+def _extrair_texto_evolution(data):
+    """Extrai o texto de uma mensagem no formato Evolution (Baileys)."""
+    msg = (data or {}).get("message") or {}
+    return (
+        msg.get("conversation")
+        or (msg.get("extendedTextMessage") or {}).get("text")
+        or (msg.get("imageMessage") or {}).get("caption")
+        or ""
+    ).strip()
+
+
+def _processar_demo(numero, texto, remetente):
+    """Roda o agente e envia a resposta (em thread, fora do ciclo do webhook)."""
+    try:
+        resposta = agente_demo_crm.responder(texto, remetente=remetente)
+        send_whatsapp_text(numero, resposta)
+        print(f"[DEMO] respondido {_mascara_id(numero)}: {resposta[:80]}")
+    except Exception as e:
+        print(f"[DEMO] processamento erro: {e}")
+
+
+@app.route("/webhook/evolution", methods=["GET", "POST"])
+def webhook_evolution():
+    """Recebe mensagens do WhatsApp (Evolution API) e responde com o agente de demo.
+
+    Segurança: se DEMO_WEBHOOK_TOKEN estiver setado, exige ?token= igual.
+    Opcional: DEMO_ALLOWED_PHONES restringe quem o bot responde (whitelist).
+    100% reativo: só responde a mensagens recebidas (ignora fromMe/eco e grupos).
+    """
+    if request.method == "GET":
+        return jsonify({"ok": True, "demo": "webhook evolution ativo"})
+    if DEMO_WEBHOOK_TOKEN and request.args.get("token") != DEMO_WEBHOOK_TOKEN:
+        return jsonify({"error": "token inválido"}), 403
+    if not agente_demo_crm:
+        return jsonify({"error": "agente de demo indisponível"}), 503
+
+    body = request.get_json(silent=True) or {}
+    data = body.get("data") or {}
+    key = data.get("key") or {}
+    if key.get("fromMe"):
+        return jsonify({"ok": True, "ignored": "fromMe"})
+    jid = key.get("remoteJid") or ""
+    if jid.endswith("@g.us"):
+        return jsonify({"ok": True, "ignored": "grupo"})
+
+    numero = jid.split("@")[0]
+    if DEMO_ALLOWED_PHONES and numero not in DEMO_ALLOWED_PHONES:
+        return jsonify({"ok": True, "ignored": "fora da whitelist"})
+
+    mid = key.get("id")
+    if mid:
+        if mid in _demo_msgs_vistas:
+            return jsonify({"ok": True, "dup": True})
+        _demo_msgs_vistas.add(mid)
+        if len(_demo_msgs_vistas) > 2000:
+            _demo_msgs_vistas.clear()
+
+    texto = _extrair_texto_evolution(data)
+    if not texto:
+        return jsonify({"ok": True, "ignored": "sem texto"})
+
+    remetente = data.get("pushName") or ""
+    # Responde em background pra dar ack rápido (OpenAI leva alguns segundos).
+    threading.Thread(target=_processar_demo, args=(numero, texto, remetente), daemon=True).start()
+    return jsonify({"ok": True})
+
+
 # Tools (function calling). Cada uma exige confidence + reasoning.
 AI_TOOLS = [
     # ===== LEITURA =====
